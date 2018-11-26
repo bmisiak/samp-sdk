@@ -1,0 +1,13 @@
+[package]
+name = "samp-sdk"
+version = "0.1.0"
+authors = ["ZOTTCE <zottce@gmail.com>"]
+edition = "2018"
+build = "build.rs"
+
+[dependencies]
+samp-sdk-codegen = { path = "../codegen" }
+encoding = "0.2"
+
+[build-dependencies]
+yansi = "0.4.0"

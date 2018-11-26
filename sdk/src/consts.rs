@@ -2,20 +2,20 @@
 AMX Constants.
 
 
-There is a bunch of raw AMX constants. 
+There is a bunch of raw AMX constants.
 
 They shouldn't be used in yours plugin code.
 */
 
 pub const SUPPORTS_VERSION: u32 = 512;
-pub const SUPPORTS_VERSION_MASK: u32 = 65535;
-pub const SUPPORTS_AMX_NATIVES: u32 = 65536;
+pub const SUPPORTS_VERSION_MASK: u32 = 65_535;
+pub const SUPPORTS_AMX_NATIVES: u32 = 65_536;
 pub const SUPPORTS_PROCESS_TICK: u32 = 131_072;
 
-pub const PLUGIN_DATA_LOGPRINTF: u32 = 0;
-pub const PLUGIN_DATA_AMX_EXPORTS: u32 = 16;
-pub const PLUGIN_DATA_CALLPUBLIC_FS: u32 = 17;
-pub const PLUGIN_DATA_CALLPUBLIC_GM: u32 = 18;
+pub const PLUGIN_DATA_LOGPRINTF: isize = 0;
+pub const PLUGIN_DATA_AMX_EXPORTS: isize = 16;
+pub const PLUGIN_DATA_CALLPUBLIC_FS: isize = 17;
+pub const PLUGIN_DATA_CALLPUBLIC_GM: isize = 18;
 
 pub const AMX_ERR_NONE: i32 = 0;
 pub const AMX_ERR_EXIT: i32 = 1;
