@@ -548,6 +548,133 @@ impl AMX {
         }
     }
 
+    /// Gets a CString from AMX, given a cell address and length. Mostly for internal use.
+    /// You are better off using AMX::get_cstring() if you only have the Cell containing the string.
+    /// 
+    /// Since SA-MP does not support Unicode and relies on Windows codepages,
+    /// this function will work correctly for all servers, including the ones which use (or whose users use)
+    /// codepages other than cp1251.
+    /// 
+    /// It is also faster, because it does not have to unnecessarily validate and convert SA-MP's strings to UTF8. 
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #[macro_use] extern crate samp_sdk;
+    /// use samp_sdk::amx::{AMX, AmxResult};
+    /// use samp_sdk::types::Cell;
+    /// use samp_sdk::cp1251;
+    ///
+    /// pub struct MyPlugin;
+    ///
+    /// impl MyPlugin {
+    ///
+    ///     fn raw_function(&self, amx: &AMX, params: *mut Cell) -> AmxResult<Cell> {
+    ///         unsafe {
+    ///             let ptr = std::ptr::read(params.offset(1));
+    ///             let mut addr = amx.get_address::<i32>(ptr)?; // get a pointer from amx
+    ///             let len = amx.string_len(addr)?; // get string length in amx
+    ///             let string = unsafe { 
+    ///                 amx.get_cstring_of_length(addr, len + 1) 
+    ///             };
+    ///
+    ///             log!("got CString: {:?}, converted to UTF-8 Rust String: {:?}", string, cp1251::decode(string.to_bytes()));
+    ///
+    ///             std::mem::forget(addr);
+    ///         }
+    ///
+    ///         Ok(0)
+    ///     }
+    ///
+    /// }
+    /// ```
+    pub unsafe fn get_cstring_of_length(&self, address: *const Cell, size: usize) -> CString {
+        const UNPACKEDMAX: u32 = ((1u32 << ((size_of::<u32>() - 1) * 8)) - 1u32);
+        const CHARBITS: usize = 8 * size_of::<u8>();
+
+        let mut string = Vec::with_capacity(size);
+
+        if read(address) as u32 > UNPACKEDMAX {
+            // packed string
+            let mut i = size_of::<Cell>() - 1;
+            let mut cell = 0;
+            let mut ch;
+            let mut length = 0;
+            let mut offset = 0;
+
+            while length < size {
+                if i == size_of::<Cell>() - 1 {
+                    cell = read(address.offset(offset));
+                    offset += 1;
+                }
+
+                ch = (cell >> (i * CHARBITS)) as u8;
+
+                if ch == 0 {
+                    break;
+                }
+
+                string.push(ch);
+                length += 1;
+                i = (i + size_of::<Cell>() - 1) % size_of::<Cell>();
+            }
+        } else {
+            let mut length = 0;
+            let mut byte = read(address.offset(length));
+
+            while byte != 0 && length < size as isize {
+                string.push(byte as u8);
+                length += 1;
+                byte = read(address.offset(length));
+            }
+        }
+
+         //from_vec_unchecked always adds nul at the end. Assuming AMX knows what it's doing, no need to check for internal nuls.
+        CString::from_vec_unchecked(string)
+    }
+
+    /// Gets a CString from AMX, given a cell with a string.
+    /// 
+    /// Since SA-MP does not support Unicode and relies on Windows codepages,
+    /// this function will work correctly for all servers, including the ones which use (or whose users use)
+    /// codepages other than cp1251.
+    /// 
+    /// It is also faster, because it does not have to unnecessarily validate and convert SA-MP's strings to UTF8. 
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use samp_sdk::log;
+    /// use samp_sdk::cp1251;
+    /// use samp_sdk::types::Cell;
+    /// use samp_sdk::amx::{AMX, AmxResult};
+    ///
+    /// // native:PushString(const string[]);
+    /// fn raw_arguments(amx: &AMX, args: *mut Cell) -> AmxResult<Cell> {
+    ///     let passed_string_argument = unsafe { args.offset(1) };
+    ///     let string = amx.get_cstring( passed_string_argument )?;
+    ///     
+    ///     log!("got CString: {:?}, converted to UTF-8 Rust String: {:?}", string, cp1251::decode(string.to_bytes()));
+    ///     Ok(0)
+    /// }
+    /// ```
+    #[inline]
+    pub fn get_cstring(&self, cell: *mut Cell) -> AmxResult<CString> {
+        let pointer = unsafe {
+            ::std::ptr::read(cell)
+        };
+
+        let address = self.get_address::<i32>(pointer)?;
+        let len = self.string_len(address)?;
+        let cstr = unsafe { 
+            self.get_cstring_of_length(address, len)
+        };
+
+        //std::mem::forget(addr);
+
+        Ok(cstr)
+    }
+
     /// Raises an AMX error.
     pub fn raise_error(&self, error: AmxError) -> AmxResult<()> {
         let raise_error = import!(RaiseError);
