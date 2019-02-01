@@ -675,6 +675,56 @@ impl AMX {
         Ok(cstr)
     }
 
+    /// Writes a string to the AMX memory address given via dest_address.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #[macro_use] extern crate samp_sdk;
+    /// use samp_sdk::types::Cell;
+    /// use std::ffi::{CStr,CString};
+    /// use samp_sdk::amx::{AMX, AmxResult};
+    ///
+    /// // native: rot13(const source[], dest[], size=sizeof(dest));
+    /// // define_native!(n_rot13, source: CString, dest_ptr: &mut types::Cell, size: usize);
+    ///
+    /// fn n_rot13(amx: &AMX, source: CString, dest_ptr: &mut Cell, size: usize) -> AmxResult<Cell> {
+    ///     let roted = rot13(&source);
+    ///     unsafe { 
+    ///         amx.set_cstr_of_size(&roted, dest_ptr, size); 
+    ///     }
+    ///     Ok(0)
+    /// }
+    ///
+    /// fn rot13(string: &CStr) -> CString {
+    ///      let alphabet: [u8; 26] = [
+    ///          b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'l', b'm',
+    ///          b'n', b'o', b'p', b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z'
+    ///      ];
+    ///
+    ///      CString::new::<Vec<u8>>(
+    ///         string.to_bytes().into_iter()
+    ///            .map(|c| *alphabet.iter()
+    ///                              .chain(alphabet.iter())
+    ///                              .skip_while(|&x| *x != *c)
+    ///                              .nth(13)
+    ///                              .unwrap_or(&c))
+    ///            .collect()
+    ///      ).unwrap()
+    /// }
+    /// ```
+    pub unsafe fn set_cstr_of_size(&self, string: &CStr, dest_address: *mut Cell, allowed_length: usize) {
+        let bytes = string.to_bytes();
+
+        // The following is the idiomatic way of doing this in Rust, as per Clippy. 
+        // All of it gets optimized away by the compiler.
+        for (position, byte) in bytes.iter().enumerate().take(allowed_length) {
+            *(dest_address.add(position)) = i32::from(*byte);
+        }
+
+        *(dest_address.add( std::cmp::min(allowed_length,bytes.len()) )) = 0;
+    }
+
     /// Raises an AMX error.
     pub fn raise_error(&self, error: AmxError) -> AmxResult<()> {
         let raise_error = import!(RaiseError);
