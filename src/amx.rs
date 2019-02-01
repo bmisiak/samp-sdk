@@ -13,7 +13,6 @@ use crate::types;
 use crate::types::Cell;
 use crate::consts::*;
 use crate::data::amx_functions;
-use crate::cp1251;
 
 pub type AmxResult<T> = Result<T, AmxError>;
 
@@ -286,22 +285,18 @@ impl AMX {
     /// Allots memory for a string and pushes it to the AMX stack.
     ///
     /// Please, don't use it directly! Better use macros `exec!`, `exec_public!` and `exec_native!`.
-    pub fn push_string(&self, string: &str, packed: bool) -> AmxResult<Cell> {
+    pub fn push_string(&self, string: &CStr, packed: bool) -> AmxResult<Cell> {
         if packed {
             unimplemented!()
         } else {
-            let bytes = cp1251::encode(string)?;
-            let (amx_addr, phys_addr) = self.allot(bytes.len() + 1)?;
+            let bytes = string.to_bytes_with_nul();
+            let (amx_addr, phys_addr) = self.allot(bytes.len())?;
             let dest = phys_addr as *mut Cell;
 
-            for i in 0..bytes.len() {
+            for (position, character) in bytes.iter().enumerate() {
                 unsafe {
-                    *(dest.offset(i as isize)) = bytes[i] as i32;
+                    *(dest.add(position)) = i32::from(*character);
                 }
-            }
-
-            unsafe {
-                *(dest.offset(bytes.len() as isize)) = 0;
             }
 
             self.push(amx_addr)?;
@@ -473,6 +468,8 @@ impl AMX {
 
     /// Gets a string from AMX.
     ///
+    /// Deprecated due to its assumption of cp1251 encoding. Use AMX::get_cstring_of_length().
+    ///
     /// # Examples
     ///
     /// ```
@@ -489,7 +486,7 @@ impl AMX {
     ///             let ptr = std::ptr::read(params.offset(1));
     ///             let mut addr = amx.get_address::<i32>(ptr)?; // get a pointer from amx
     ///             let len = amx.string_len(addr)?; // get string length in amx
-    ///             let string = amx.get_string(addr, len + 1)?; // convert amx string to rust String
+    ///             let string = amx.get_string_of_length(addr, len + 1)?; // convert amx string to rust CString
     ///
     ///             log!("got string: {}", string);
     ///
@@ -501,51 +498,33 @@ impl AMX {
     ///
     /// }
     /// ```
-    pub fn get_string(&self, address: *const Cell, size: usize) -> AmxResult<String> {
-        const UNPACKEDMAX: u32 = ((1u32 << (size_of::<u32>() - 1) * 8) - 1u32);
-        const CHARBITS: usize = 8 * size_of::<u8>();
+    #[deprecated(note = "Deprecated due to its assumption of cp1251 encoding. Use AMX::get_cstring_of_length().")]
+    pub unsafe fn get_string_of_length(&self, address: *const Cell, size: usize) -> AmxResult<String> {
+        let cstring = self.get_cstring_of_length(address,size);
+        crate::cp1251::decode(cstring.as_bytes())
+    }
 
-        let mut string = Vec::with_capacity(size);
-
-        unsafe {
-            if read(address) as u32 > UNPACKEDMAX {
-                // packed string
-                let mut i = size_of::<Cell>() - 1;
-                let mut cell = 0;
-                let mut ch;
-                let mut length = 0;
-                let mut offset = 0;
-
-                while length < size {
-                    if i == size_of::<Cell>() - 1 {
-                        cell = read(address.offset(offset));
-                        offset += 1;
-                    }
-
-                    ch = (cell >> i * CHARBITS) as u8;
-
-                    if ch == 0 {
-                        break;
-                    }
-
-                    string.push(ch);
-                    length += 1;
-                    i = (i + size_of::<Cell>() - 1) % size_of::<Cell>();
-                }
-            } else {
-                let mut length = 0;
-                let mut byte = read(address.offset(length));
-
-                while byte != 0 && length < size as isize {
-                    string.push(byte as u8);
-                    length += 1;
-                    byte = read(address.offset(length));
-                }
-            }
-
-            cp1251::decode(string.as_slice())
-            // Ok(String::from_utf8_unchecked(string))
-        }
+    /// Gets a string from a raw pointer to `Cell`.
+    ///
+    /// Deprecated due to its assumption of cp1251 encoding. Use AMX::get_cstring().
+    ///
+    /// # Examples
+    /// ```
+    /// use samp_sdk::log;
+    /// use samp_sdk::types::Cell;
+    /// use samp_sdk::amx::{AMX, AmxResult};
+    ///
+    /// // native:PushString(const string[]);
+    /// fn raw_arguments(amx: &AMX, args: *mut Cell) -> AmxResult<Cell> {
+    ///     let string = amx.get_string( unsafe { args.offset(1) } )?;
+    ///     log!("got a string: {}", string);
+    ///     Ok(0)
+    /// }
+    /// ```
+    #[deprecated(note = "Deprecated due to its assumption of cp1251 encoding. Use AMX::get_cstring().")]
+    pub fn get_string(&self, cell: *mut Cell) -> AmxResult<String> {
+        let cstring = self.get_cstring(cell)?;
+        crate::cp1251::decode(cstring.as_bytes())
     }
 
     /// Gets a CString from AMX, given a cell address and length. Mostly for internal use.

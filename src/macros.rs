@@ -279,11 +279,11 @@ macro_rules! expand_args {
         $amx:ident,
         $parser:ident,
 
-        $arg:ident : String
+        $arg:ident : CString
     ) => {
         let $arg = {
             let arg = $parser.next();
-            match get_string!($amx, arg) {
+            match $amx.get_cstring(arg) {
                 Ok(res) => res,
                 Err(err) => {
                     $amx.raise_error(err).unwrap();
@@ -344,10 +344,10 @@ macro_rules! expand_args {
         $amx:ident,
         $parser:ident,
 
-        $arg:ident : String,
+        $arg:ident : CString,
         $( $tail_arg:ident : $( $tail_data:ident )+ ),*
     ) => {
-        expand_args!(@$amx, $parser, $arg : String);
+        expand_args!(@$amx, $parser, $arg : CString);
         expand_args!(@$amx, $parser, $( $tail_arg : $( $tail_data )+ ),*);
     };
 
@@ -507,10 +507,11 @@ macro_rules! exec {
 /// #[macro_use] extern crate samp_sdk;
 /// use samp_sdk::types::Cell;
 /// use samp_sdk::amx::{AMX, AmxResult};
+/// use std::ffi::{CString,CStr};
 ///
 /// fn native(amx: &AMX) {
-///     let old_name = String::from("Old_Name");
-///     let new_name = String::from("Name_Surname");
+///     let old_name = CString::new("Name_Oldsurname").unwrap();
+///     let new_name = CString::new("Name_Surname").unwrap();
 ///     exec_public!(amx, "OnPlayerNameChanged"; old_name => string, new_name => string);
 /// }
 /// ```
@@ -527,7 +528,18 @@ macro_rules! exec_public {
 /// Finds a native function and executes `AMX::exec` with given arguments.
 ///
 /// # Examples
-/// Same as `exec_public!`.
+/// ```
+/// #[macro_use] extern crate samp_sdk;
+/// use samp_sdk::types::Cell;
+/// use samp_sdk::amx::{AMX, AmxResult};
+/// use std::ffi::{CString,CStr};
+///
+/// fn native(amx: &AMX) {
+///     let playerid = 1 as i32;
+///     let new_name = CString::new("Name_Surname").unwrap();
+///     exec_native!(amx, "SetPlayerName"; playerid, &new_name => string);
+/// }
+/// ```
 #[macro_export]
 macro_rules! exec_native {
     (@internal
@@ -564,11 +576,14 @@ macro_rules! exec_native {
         $addr:ident;
         $arg:expr => string
     ) => {
-        let bytes = $crate::cp1251::encode($arg)?;
+        let cstring = $arg;
+        let bytes = cstring.to_bytes_with_nul();
 
-        let (__amx, __phys) = $amx.allot(bytes.len() + 1)?;
+        let (__amx, __phys) = $amx.allot(bytes.len())?;
 
-        set_string!(bytes, __phys, bytes.len());
+        unsafe {
+            $amx.set_cstr_of_size(cstring, __phys as *mut Cell, bytes.len()-1);
+        }
         $params.push(__amx);
 
         if $addr.is_none() {
@@ -670,40 +685,6 @@ macro_rules! exec_native {
     }
 }
 
-/// Gets a string from a raw pointer to `Cell`.
-///
-/// Should used in `define_native!` and raw functions.
-///
-/// # Examples
-/// ```
-/// #[macro_use] extern crate samp_sdk;
-/// use samp_sdk::types::Cell;
-/// use samp_sdk::amx::{AMX, AmxResult};
-///
-/// // native:PushString(const string[]);
-/// fn raw_arguments(amx: &AMX, args: *mut Cell) -> AmxResult<Cell> {
-///     let string = get_string!(amx, args.offset(1))?;
-///     log!("got a string: {}", string);
-///     Ok(0)
-/// }
-/// ```
-#[macro_export]
-macro_rules! get_string {
-    ($amx:ident, $cell:expr) => {
-        {
-            let pointer = unsafe {
-                ::std::ptr::read($cell)
-            };
-
-            $amx.get_address::<i32>(pointer)
-                .and_then(|address| {
-                    $amx.string_len(address)
-                        .and_then(|len| $amx.get_string(address, len))
-                })
-        }
-    }
-}
-
 /// Get a slice (an array) from arguments.
 ///
 /// # Examples
@@ -726,58 +707,4 @@ macro_rules! get_array {
         $amx.get_address($addr)
             .map(|pointer| unsafe { ::std::slice::from_raw_parts_mut(pointer, $len) })
     };
-}
-
-/// Sets a string to physical address.
-///
-/// # Examples
-///
-/// ```
-/// #[macro_use] extern crate samp_sdk;
-/// use samp_sdk::types::Cell;
-/// use samp_sdk::amx::{AMX, AmxResult};
-///
-/// // native: rot13(const source[], dest[], size=sizeof(dest));
-/// // define_native!(n_rot13, source: String, dest_ptr: &mut types::Cell, size: usize);
-///
-/// fn n_rot13(amx: &AMX, source: String, dest_ptr: &mut Cell, size: usize) -> AmxResult<Cell> {
-///     let roted = rot13(source);
-///     let encoded = samp_sdk::cp1251::encode(&roted)?;
-///     set_string!(encoded, dest_ptr, size);
-///     Ok(0)
-/// }
-///
-/// fn rot13(string: String) -> String {
-///      let alphabet = [
-///          'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
-///          'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
-///      ];
-///
-///      string.chars()
-///            .map(|c| *alphabet.iter()
-///                              .chain(alphabet.iter())
-///                              .skip_while(|&x| *x != c)
-///                              .nth(13)
-///                              .unwrap_or(&c))
-///            .collect()
-/// }
-/// ```
-#[macro_export]
-macro_rules! set_string {
-    ($string:expr, $address:expr, $size:expr) => {
-        {
-            let length = if $string.len() > $size { $size } else { $string.len() };
-            let dest = $address as *mut $crate::types::Cell;
-
-            for i in 0..length {
-                unsafe {
-                    *(dest.offset(i as isize)) = $string[i] as i32;
-                }
-            }
-
-            unsafe {
-                *(dest.offset(length as isize)) = 0;
-            }
-        }
-    }
 }

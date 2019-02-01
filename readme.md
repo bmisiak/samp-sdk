@@ -7,15 +7,14 @@
 Pretty cool and beautiful bindings for SA:MP SDK. Read [Get Started](https://github.com/ZOTTCE/samp-sdk/wiki/Get-started) wiki page.
 
 ## Features
-Hides most of type coercion. You don't need make a `cell` type as a `String` or other things yourself.
+Hides most of type coercion. You don't need make a `cell` type as a `CString` or other things yourself.
 
 Macros:
 * `new_plugin!` that defines a plugin and exports functions.
 * `define_native!` defines a native and parses arguments.
 * `log!` calls `logprinft` funciton.
 * `natives!` makes a vec of your natives.
-* `get_string!` and `get_array!` convert pointers to a `slice` or a `String`.
-* `set_string!` sets a string to an AMX by a physical address.
+* `get_array!` converts pointer to a `slice`
 
 ### Useful macros
 #### Make a new plugin
@@ -92,7 +91,7 @@ define_native(function_name);
 #### Call natives and public functions.
 ``` Rust
 // Broadcast to all subscribers that a user have changed his name.
-fn notify(&self, amx: AMX, player_id: u32, old_name: String, new_name: String) -> AmxResult<Cell> {
+fn notify(&self, amx: AMX, player_id: u32, old_name: CString, new_name: CString) -> AmxResult<Cell> {
     exec_public!(amx, "OnPlayerNameChanged"; player_id, old_name => string, new_name => string)
 }
 ```
