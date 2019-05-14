@@ -576,13 +576,13 @@ macro_rules! exec_native {
         $addr:ident;
         $arg:expr => string
     ) => {
-        let cstring = $arg;
-        let bytes = cstring.to_bytes_with_nul();
+        let cstr = $arg;
+        let bytes = cstr.to_bytes_with_nul();
 
         let (__amx, __phys) = $amx.allot(bytes.len())?;
 
         unsafe {
-            $amx.set_cstr_of_size(cstring, __phys as *mut Cell, bytes.len()-1);
+            $amx.set_cstr_of_size(cstr, __phys as *mut Cell, bytes.len()-1);
         }
         $params.push(__amx);
 
