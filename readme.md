@@ -1,11 +1,29 @@
-# SA:MP SDK
-[![Build Status](https://travis-ci.com/ZOTTCE/samp-sdk.svg?branch=master)](https://travis-ci.com/ZOTTCE/samp-sdk)
-[![Build status](https://ci.appveyor.com/api/projects/status/ldq6suvwlmka072o/branch/master?svg=true)](https://ci.appveyor.com/project/ZOTTCE/samp-sdk/branch/master)
-[![Docs](https://docs.rs/samp-sdk/badge.svg)](https://docs.rs/samp-sdk)
-[![Crates](https://img.shields.io/crates/v/samp-sdk.svg)](https://crates.io/crates/samp-sdk)
+[![Docs](https://docs.rs/samp/badge.svg)](https://docs.rs/samp)
+[![Crates](https://img.shields.io/crates/v/samp.svg)](https://crates.io/crates/samp)
+# samp-rs
+samp-rs is a tool to develop plugins for [samp](http://sa-mp.com) servers written in rust.
 
-Pretty cool and beautiful bindings for SA:MP SDK. Read [Get Started](https://github.com/ZOTTCE/samp-sdk/wiki/Get-started) wiki page.
+# documentation
+it's [here](https://zottce.github.io/samp-rs/samp/index.html)! need to find a way to fix docs.rs ...
 
+# project structure
+* `samp` is a glue between crates described below (that's what you need).
+* `samp-codegen` generates raw `extern "C"` functions and does whole nasty job.
+* `samp-sdk` contains all types to work with amx.
+
+# usage
+* [install](https://rustup.rs) rust compiler (supports only `i686` os versions because of samp server arch).
+* add in your `Cargo.toml` this:
+```toml
+[lib]
+crate-type = ["cdylib"] # or dylib
+
+[dependencies]
+samp = "0.1.2"
+```
+* write your first plugin
+
+<<<<<<< HEAD
 ## Features
 Hides most of type coercion. You don't need make a `cell` type as a `CString` or other things yourself.
 
@@ -15,60 +33,44 @@ Macros:
 * `log!` calls `logprinft` funciton.
 * `natives!` makes a vec of your natives.
 * `get_array!` converts pointer to a `slice`
+=======
+# migration from old versions
+* check out [the guide](migration.md)
 
-### Useful macros
-#### Make a new plugin
-``` Rust
-define_native!(my_function, playerid: i32);
+# examples
+* simple memcache plugin in `plugin-example` folder.
+* your `lib.rs` file
+```rust
+use samp::prelude::*; // export most useful types
+use samp::{native, initialize_plugin}; // codegen macros
+>>>>>>> 659646d91200e932fe804935b8cf48b0d6bb8dd7
 
-struct Plugin {
-    version: &'static str,
-    amx_count: u32,
+struct Plugin;
+
+impl SampPlugin for Plugin {
+    // this function executed when samp server loads your plugin
+    fn on_load(&mut self) {
+        println!("Plugin is loaded.");
+    }
 }
 
 impl Plugin {
-    fn load(&self) -> bool {
-        log!("Plugin is loaded. Version: {}", self.version);
-        return true;
-    }
+    #[native(name = "TestNative")]
+    fn my_native(&mut self, _amx: &Amx, text: AmxString) -> AmxResult<bool> {
+        let text = text.to_string(); // convert amx string into rust string
+        println!("rust plugin: {}", text);
 
-    fn unload(&self) {
-       log!("Plugin has unloaded");
-    }
-
-    fn amx_load(&mut self, amx: &AMX) -> Cell {
-        let natives = natives![
-            { "MyFunction", my_function }
-        ];
-
-        match amx.register(&natives) {
-            Ok(_) => log!("Natives are successful loaded"),
-            Err(err) => log!("Whoops, there is an error {:?}", err),
-        }
-
-        self.amx_count += 1;
-
-        AMX_ERR_NONE
-    }
-
-    fn amx_unload(&mut self, _: &AMX) -> Cell {
-        self.amx_count -= 1;
-
-        AMX_ERR_NONE
-    }
-
-    fn my_function(&self, _amx: &AMX, player_id: i32) -> AmxResult<Cell> {
-        Ok(-player_id)
+        Ok(true)
     }
 }
 
-impl Default for Plugin {
-    fn default() -> Self {
-        Plugin {
-            version: "0.1",
-            amx_count: 0,
-        }
+initialize_plugin!(
+    natives: [Plugin::my_native],
+    {
+        let plugin = Plugin; // create a plugin object
+        return plugin; // return the plugin into runtime
     }
+<<<<<<< HEAD
 }
 
 new_plugin!(Plugin);
@@ -104,3 +106,7 @@ fn notify(&self, amx: AMX, player_id: u32, old_name: CString, new_name: CString)
 
 ## Plugin example
 [Here](https://github.com/ZOTTCE/samp-plugin-example) you can see such a beautiful example of the samp-sdk.
+=======
+)
+```
+>>>>>>> 659646d91200e932fe804935b8cf48b0d6bb8dd7
