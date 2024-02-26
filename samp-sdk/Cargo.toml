@@ -16,9 +16,6 @@ encoding = ["encoding_rs"]
 bitflags = "1.0.4"
 encoding_rs = { version = "0.8.17", optional = true }
 
-[build-dependencies]
-colored = "1.7.0"
-
 [package.metadata.docs.rs]
 features = ["encoding"]
 default-target = "i686-pc-windows-msvc"
