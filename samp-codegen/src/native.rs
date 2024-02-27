@@ -102,9 +102,9 @@ pub fn create_native(args: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     let call_origin = if !native.raw {
-        quote!(plugin.as_mut().#origin_name(amx, #(#fn_input),*))
+        quote!(plugin.as_ref().#origin_name(amx, #(#fn_input),*))
     } else {
-        quote!(plugin.as_mut().#origin_name(amx, args))
+        quote!(plugin.as_ref().#origin_name(amx, args))
     };
 
     let native_generated = quote! {
@@ -120,7 +120,7 @@ pub fn create_native(args: TokenStream, input: TokenStream) -> TokenStream {
             };
 
             let mut args = samp::args::Args::new(amx, args);
-            let mut plugin = samp::plugin::get::<Self>();
+            let plugin = samp::plugin::get::<Self>();
 
             #(#args_parsing)*
 

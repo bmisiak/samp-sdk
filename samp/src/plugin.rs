@@ -103,18 +103,18 @@ pub fn get<T: SampPlugin + 'static>() -> NonNull<T> {
 ///
 /// All methods are optional
 pub trait SampPlugin {
-    fn on_load(&mut self) {}
-    fn on_unload(&mut self) {}
+    fn on_load(&self) {}
+    fn on_unload(&self) {}
 
-    fn on_amx_load(&mut self, amx: &Amx) {
+    fn on_amx_load(&self, amx: &Amx) {
         let _ = amx;
     }
 
-    fn on_amx_unload(&mut self, amx: &Amx) {
+    fn on_amx_unload(&self, amx: &Amx) {
         let _ = amx;
     }
 
-    fn process_tick(&mut self) {}
+    fn process_tick(&self) {}
 }
 
 #[doc(hidden)]

@@ -126,8 +126,8 @@ impl Runtime {
     }
 
     #[inline]
-    pub fn plugin() -> &'static mut dyn SampPlugin {
-        unsafe { (*RUNTIME).plugin.as_mut().unwrap().as_mut() }
+    pub fn plugin() -> &'static dyn SampPlugin {
+        unsafe { (*RUNTIME).plugin.unwrap().as_ref() }
     }
 
     #[inline]
