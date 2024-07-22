@@ -23,7 +23,7 @@ macro_rules! amx_try {
 }
 
 /// A wrapper around a raw pointer to an AMX and exported functions.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Amx {
     ptr: *mut AMX,
     fn_table: usize,
