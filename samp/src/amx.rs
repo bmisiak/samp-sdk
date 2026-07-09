@@ -2,9 +2,17 @@
 pub use samp_sdk::amx::*;
 use samp_sdk::raw::types::AMX;
 
-use crate::runtime::Runtime;
+use std::cell::RefCell;
+use std::collections::HashMap;
 
-/// Get a reference to an `Amx` by given `AmxIdent`.
+thread_local! {
+    /// All AMX instances that went through `AmxLoad`, so publics can be
+    /// executed later on an `Amx` that wasn't kept around. SA-MP plugins run
+    /// on the server's main thread.
+    static REGISTRY: RefCell<HashMap<AmxIdent, Amx>> = RefCell::new(HashMap::new());
+}
+
+/// Get a copy of a loaded `Amx` handle by its `AmxIdent`.
 ///
 /// # Example
 /// ```
@@ -12,46 +20,52 @@ use crate::runtime::Runtime;
 /// use samp::exec_public;
 /// # use samp::native;
 /// # use samp::amx::AmxIdent;
+/// # use std::cell::RefCell;
+/// # use std::collections::HashMap;
 ///
-/// # struct Plugin {
-/// #       subscribtions: std::collections::HashMap<String, Vec<AmxIdent>>,
-/// # }
-/// #
-/// # impl SampPlugin for Plugin {}
-/// #
-/// # impl Plugin {
+/// thread_local! {
+///     static SUBSCRIBERS: RefCell<HashMap<String, Vec<AmxIdent>>> =
+///         RefCell::new(HashMap::new());
+/// }
 ///
 /// #[native(name = "SubscribeToEvent")]
-/// fn subscribe(&mut self, amx: &Amx, event_name: AmxString) -> AmxResult<bool> {
+/// fn subscribe(amx: &Amx, event_name: AmxString) -> AmxResult<bool> {
 ///     let event_name = event_name.to_string();
-///     let subs = self.subscribtions.entry(event_name).or_insert(vec![]);
-///     subs.push(amx.ident());
+///     SUBSCRIBERS.with(|subs| {
+///         subs.borrow_mut()
+///             .entry(event_name)
+///             .or_insert(vec![])
+///             .push(amx.ident());
+///     });
 ///
 ///     Ok(true)
 /// }
 ///
-/// fn publish(&self, event_name: &str) {
-///     if let Some(subs) = self.subscribtions.get(event_name) {
-///         for ident in subs {
-///             if let Some(amx) = samp::amx::get(*ident) {
-///                 let _ = exec_public!(amx, event_name);
+/// fn publish(event_name: &str) {
+///     SUBSCRIBERS.with(|subs| {
+///         if let Some(idents) = subs.borrow().get(event_name) {
+///             for ident in idents {
+///                 if let Some(amx) = samp::amx::get(*ident) {
+///                     let _ = exec_public!(amx, event_name);
+///                 }
 ///             }
 ///         }
-///     }
+///     });
 /// }
-///
-/// # }
 /// ```
 #[inline]
-pub fn get<'a>(ident: AmxIdent) -> Option<&'a Amx> {
-    let rt = Runtime::get();
-    rt.amx_list().get(&ident)
+pub fn get(ident: AmxIdent) -> Option<Amx> {
+    REGISTRY.with(|registry| registry.borrow().get(&ident).copied())
 }
 
-#[inline]
-pub fn add<'a>(amx: *mut AMX) {
-    let rt = Runtime::get();
-    rt.insert_amx(amx);
+pub(crate) fn insert(ptr: *mut AMX) -> Amx {
+    let amx = Amx::new(ptr, crate::interlayer::amx_exports());
+    REGISTRY.with(|registry| registry.borrow_mut().insert(ptr.into(), amx));
+    amx
+}
+
+pub(crate) fn remove(ptr: *mut AMX) -> Option<Amx> {
+    REGISTRY.with(|registry| registry.borrow_mut().remove(&ptr.into()))
 }
 
 /// An unique identifier of an `Amx` instance.
@@ -76,20 +90,13 @@ pub trait AmxExt {
     /// ```
     /// use samp::prelude::*;
     /// # use samp::native;
-    /// # struct Plugin;
-    /// #
-    /// # impl SampPlugin for Plugin {}
-    /// #
-    /// # impl Plugin {
     ///
     /// #[native(name = "A")]
-    /// fn native_a(&mut self, amx: &Amx) -> AmxResult<bool> {
+    /// fn native_a(amx: &Amx) -> AmxResult<bool> {
     ///     let ident = amx.ident();
     ///     // now you can use ident to get this Amx later by samp::amx::get
     ///     Ok(true)
     /// }
-    ///
-    /// # }
     /// ```
     fn ident(&self) -> AmxIdent;
 }

@@ -1,61 +1,28 @@
-//! Contains a plugin interface.
-use std::ptr::NonNull;
+//! Plugin setup helpers.
+//!
+//! There is no plugin object and no trait to implement: natives are free
+//! functions (see [`native`]) and lifecycle hooks are free functions passed
+//! to [`initialize_plugin!`]. Keep plugin state in `thread_local!` storage —
+//! SA-MP plugins run on the server's main thread.
+//!
+//! [`native`]: ../attr.native.html
+//! [`initialize_plugin!`]: ../macro.initialize_plugin.html
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use samp_sdk::amx::Amx;
 use samp_sdk::cell::AmxCell;
 
-use crate::runtime::Runtime;
+static DEFAULT_LOGGER: AtomicBool = AtomicBool::new(true);
 
-#[doc(hidden)]
-pub fn initialize<F, T>(constructor: F)
-where
-    F: FnOnce() -> T + 'static,
-    T: SampPlugin + 'static,
-{
-    let rt = Runtime::initialize();
-    let plugin = constructor();
-
-    rt.set_plugin(plugin);
-    rt.post_initialize();
-}
-
-/// Enables process_tick function for a plugin.
+/// Get a fern [`Dispatch`] that forwards log records to the server's
+/// `logprintf`, and disable auto-installing the default logger.
 ///
 /// # Example
-/// ```rust,compile_fail
+/// ```rust,no_run
 /// use samp::initialize_plugin;
-/// use samp::prelude::*;
 ///
-/// struct MyPlugin;
-///
-/// impl SampPlugin for MyPlugin {}
-///
-/// initialize_plugin!({
-///     samp::plugin::enable_process_tick();
-///     return MyPlugin;
-/// });
-/// ```
-pub fn enable_process_tick() {
-    let runtime = Runtime::get();
-    runtime.enable_process_tick();
-}
-
-/// Get a fern [`Dispatch`] and disable auto installing logger.
-/// 
-/// # Example
-/// ```rust,compile_fail
-/// use samp::initialize_plugin;
-/// use samp::prelude::*;
-/// 
 /// use std::fs::OpenOptions;
 ///
-/// struct MyPlugin;
-///
-/// impl SampPlugin for MyPlugin {}
-///
 /// initialize_plugin!({
-///     samp::plugin::enable_process_tick();
-///     
 ///     // get a default samp logger (uses samp logprintf).
 ///     let samp_logger = samp::plugin::logger()
 ///         .level(log::LevelFilter::Warn); // logging only warn and error messages
@@ -77,44 +44,36 @@ pub fn enable_process_tick() {
 ///         .chain(samp_logger)
 ///         .chain(trace_level)
 ///         .apply();
-/// 
-///     return MyPlugin;
 /// });
 /// ```
-/// 
-/// [`Dispatch`]: https://docs.rs/fern/0.5.7/fern/struct.Dispatch.html
-pub fn logger() -> fern::Dispatch {
-    let rt = Runtime::get();
-    rt.disable_default_logger();
-
-    fern::Dispatch::new()
-        .chain(fern::Output::call(|record| {
-            let rt = Runtime::get();
-            rt.log(record.args());
-        }))
-}
-
-#[doc(hidden)]
-pub fn get<T: SampPlugin + 'static>() -> NonNull<T> {
-    Runtime::plugin_cast()
-}
-
-/// An interface that should be implemented by any plugin.
 ///
-/// All methods are optional
-pub trait SampPlugin {
-    fn on_load(&self) {}
-    fn on_unload(&self) {}
+/// [`Dispatch`]: https://docs.rs/fern/0.6/fern/struct.Dispatch.html
+pub fn logger() -> fern::Dispatch {
+    DEFAULT_LOGGER.store(false, Ordering::Relaxed);
 
-    fn on_amx_load(&self, amx: &Amx) {
-        let _ = amx;
+    fern::Dispatch::new().chain(fern::Output::call(|record| {
+        crate::interlayer::log(record.args());
+    }))
+}
+
+/// Called by the generated `Load()` after the setup block: installs the
+/// default logger unless the setup block built its own via [`logger`].
+///
+/// [`logger`]: fn.logger.html
+#[doc(hidden)]
+pub fn finish_setup() {
+    if DEFAULT_LOGGER.load(Ordering::Relaxed) {
+        let _ = logger().apply();
     }
+}
 
-    fn on_amx_unload(&self, amx: &Amx) {
-        let _ = amx;
-    }
-
-    fn process_tick(&self) {}
+/// The `amx_*` exports table passed by the server, used by generated natives
+/// to construct [`Amx`] handles from raw pointers.
+///
+/// [`Amx`]: ../amx/struct.Amx.html
+#[doc(hidden)]
+pub fn amx_exports() -> usize {
+    crate::interlayer::amx_exports()
 }
 
 #[doc(hidden)]

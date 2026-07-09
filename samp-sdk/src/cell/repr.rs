@@ -19,11 +19,27 @@ where
     fn as_cell(&self) -> i32;
 }
 
+/// Marker for argument readers that interpret the raw cell as an AMX
+/// address and go through `amx_GetAddr` translation, as opposed to reading
+/// the cell as the value itself.
+///
+/// PAWN passes declared references (`&x`), strings, arrays — and *every*
+/// argument in a variadic segment (`{Float,_}:...`), even plain integers —
+/// this way. [`VariadicArgs`] only accepts these types, so a variadic cell
+/// cannot be misread as a by-value primitive.
+///
+/// [`VariadicArgs`]: ../../args/struct.VariadicArgs.html
+pub trait AmxCellByRef<'amx>: AmxCell<'amx> {}
+
 /// A marker showing that a value can be stored directly on a stack or a heap of an AMX.
 ///
 /// Types: i8, u8, i16, u16, i32, u32, usize, isize, f32, bool
 ///
 /// There is no values that's bigger than 4 bytes, because size of an AMX cell is 32 bits.
+///
+/// # Safety
+/// Implementors must be plain values that fit in a single 32-bit AMX cell,
+/// because they are read from and written to raw cell memory as-is.
 pub unsafe trait AmxPrimitive
 where
     Self: Sized,
@@ -73,9 +89,9 @@ impl AmxCell<'_> for f32 {
     }
 
     fn as_cell(&self) -> i32 {
-        // can't use `as` here because a float value will be an integer
-        // for example if you pass 10.0 (0x41200000) it will be 10 (0x0A)
-        unsafe { std::mem::transmute(*self) }
+        // bitwise reinterpretation: `self as i32` would convert the value
+        // (10.0 -> 10) instead of preserving the cell bits (0x41200000)
+        self.to_bits() as i32
     }
 }
 

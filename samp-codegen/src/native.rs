@@ -42,98 +42,98 @@ impl Parse for NativeName {
     }
 }
 
-// TODO: Allow use with functions that's not methods
+/// Generates, next to a free function `fn foo(amx: &Amx, ...) -> AmxResult<T>`,
+/// an `extern "C"` wrapper that builds the `Amx` handle and parses the
+/// arguments, plus a `__samp_reg_foo()` constructor of `AMX_NATIVE_INFO`
+/// for `initialize_plugin!`.
 pub fn create_native(args: TokenStream, input: TokenStream) -> TokenStream {
     let native = parse_macro_input!(args as NativeName);
     let origin_fn = parse_macro_input!(input as ItemFn);
 
+    if let Some(receiver) = origin_fn.sig.inputs.iter().find_map(|arg| match arg {
+        FnArg::Receiver(receiver) => Some(receiver),
+        FnArg::Typed(_) => None,
+    }) {
+        return Error::new(
+            receiver.span(),
+            "natives are free functions: there is no plugin object, keep state in a thread_local",
+        )
+        .to_compile_error()
+        .into();
+    }
+
     let vis = &origin_fn.vis;
-    let origin_name = &origin_fn.ident;
-    let args = origin_fn.decl.inputs.iter();
-    let native_name = prepend(&origin_fn.ident, NATIVE_PREFIX);
-    let reg_name = prepend(&origin_fn.ident, REG_PREFIX);
+    let origin_name = &origin_fn.sig.ident;
+    let native_name = prepend(origin_name, NATIVE_PREFIX);
+    let reg_name = prepend(origin_name, REG_PREFIX);
     let amx_name = &native.name;
 
-    let fn_input = origin_fn.decl.inputs.iter().skip(2);
-
-    let fn_input = fn_input
-        .map(|arg| match arg {
-            FnArg::Captured(capt) => {
-                let pat = &capt.pat;
-
-                if let Pat::Ident(pat_ident) = pat {
-                    let ident = &pat_ident.ident;
-                    Some(quote_spanned!(capt.span() => #ident))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        })
-        .flatten();
-
-    let args_parsing: proc_macro2::TokenStream = if !native.raw {
-        args.skip(2).map(|arg| {
-            match arg {
-                FnArg::Captured(capt) => {
-                    let pat = &capt.pat;
-
-                    if let Pat::Ident(pat_ident) = pat {
-                        let ident = &pat_ident.ident;
-                        Some(quote_spanned!{
-                            capt.span() => 
-                                let #ident = match args.next() {
-                                    Some(#ident) => #ident,
-                                    None => {
-                                        println!("error: couldn't parse variable {:?} in {:?} function.", stringify!(#ident), #amx_name);
-                                        return 0;
-                                    }
-                                };
-                        })
-                    } else {
-                        None
-                    }
-                },
+    // Parameters after the first one (`amx: &Amx`).
+    let param_idents: Vec<&Ident> = origin_fn
+        .sig
+        .inputs
+        .iter()
+        .skip(1)
+        .filter_map(|arg| match arg {
+            FnArg::Typed(typed) => match &*typed.pat {
+                Pat::Ident(pat_ident) => Some(&pat_ident.ident),
                 _ => None,
-            }
-        }).flatten().collect()
+            },
+            FnArg::Receiver(_) => None,
+        })
+        .collect();
+
+    let args_parsing: Vec<proc_macro2::TokenStream> = if native.raw {
+        vec![]
     } else {
-        proc_macro2::TokenStream::new()
+        param_idents
+            .iter()
+            .map(|ident| {
+                quote_spanned! { ident.span() =>
+                    let Some(#ident) = args.next_arg() else {
+                        println!(
+                            "{} error: couldn't parse the {:?} argument.",
+                            #amx_name, stringify!(#ident),
+                        );
+                        return 0;
+                    };
+                }
+            })
+            .collect()
     };
 
-    let call_origin = if !native.raw {
-        quote!(plugin.as_ref().#origin_name(amx, #(#fn_input),*))
+    // `args` is moved into raw natives, mutated by parsing ones and unused
+    // by parsing natives without parameters.
+    let args_binding = if native.raw {
+        quote!(args)
+    } else if args_parsing.is_empty() {
+        quote!(_args)
     } else {
-        quote!(plugin.as_ref().#origin_name(amx, args))
+        quote!(mut args)
+    };
+
+    let call_origin = if native.raw {
+        quote!(#origin_name(&amx, args))
+    } else {
+        quote!(#origin_name(&amx, #(#param_idents),*))
     };
 
     let native_generated = quote! {
         #vis extern "C" fn #native_name(amx: *mut samp::raw::types::AMX, args: *mut i32) -> i32 {
-            let amx_ident = samp::amx::AmxIdent::from(amx);
-
-            let amx = match samp::amx::get(amx_ident) {
-                Some(amx) => amx,
-                None => {
-                    samp::amx::add(amx);  // For GDK
-                    samp::amx::get(amx_ident).unwrap()
-                }
-            };
-
-            let mut args = samp::args::Args::new(amx, args);
-            let plugin = samp::plugin::get::<Self>();
+            // An `Amx` is just the raw pointer plus the exports table, so
+            // build it directly instead of consulting the AMX registry. This
+            // also covers AMX instances that never went through `AmxLoad`
+            // (e.g. when called through the GDK).
+            let amx = samp::amx::Amx::new(amx, samp::plugin::amx_exports());
+            let #args_binding = samp::args::Args::new(&amx, args);
 
             #(#args_parsing)*
 
-            unsafe {
-                match #call_origin {
-                    Ok(retval) => {
-                        return samp::plugin::convert_return_value(retval);
-                    },
-
-                    Err(err) => {
-                        println!("error: {}", err);
-                        return 0;
-                    }
+            match #call_origin {
+                Ok(retval) => samp::plugin::convert_return_value(retval),
+                Err(err) => {
+                    println!("{} error: {}", #amx_name, err);
+                    0
                 }
             }
         }
@@ -143,7 +143,7 @@ pub fn create_native(args: TokenStream, input: TokenStream) -> TokenStream {
         #vis fn #reg_name() -> samp::raw::types::AMX_NATIVE_INFO {
             samp::raw::types::AMX_NATIVE_INFO {
                 name: std::ffi::CString::new(#amx_name).unwrap().into_raw(),
-                func: Self::#native_name,
+                func: #native_name,
             }
         }
     };

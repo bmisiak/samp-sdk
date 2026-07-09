@@ -1,47 +1,68 @@
-use crate::runtime::Runtime;
+//! Glue between the SA-MP server's raw plugin interface and safe code.
+//! The functions here are called from the entry points that
+//! `initialize_plugin!` generates.
+use std::ffi::CString;
+use std::fmt::Display;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use samp_sdk::consts::{ServerData, Supports};
+use samp_sdk::raw::functions::Logprintf;
 use samp_sdk::raw::types::{AMX, AMX_NATIVE_INFO};
 
-pub fn supports() -> u32 {
-    let rt = Runtime::get();
-    let supports = rt.supports();
+use crate::amx::Amx;
+
+/// The server's export table, set once in `Load()` before anything else runs.
+static SERVER_EXPORTS: AtomicUsize = AtomicUsize::new(0);
+
+pub fn supports(process_tick: bool) -> u32 {
+    let mut supports = Supports::VERSION | Supports::AMX_NATIVES;
+
+    if process_tick {
+        supports |= Supports::PROCESS_TICK;
+    }
 
     supports.bits()
 }
 
-pub fn load(server_exports: *const usize) {
-    let rt = Runtime::get();
-    let plugin = Runtime::plugin();
-
-    rt.set_server_exports(server_exports);
-    plugin.on_load();
+pub fn load(server_data: *const usize) {
+    SERVER_EXPORTS.store(server_data as usize, Ordering::Relaxed);
 }
 
-pub fn unload() {
-    let plugin = Runtime::plugin();
-    plugin.on_unload();
+fn server_exports() -> *const usize {
+    let exports = SERVER_EXPORTS.load(Ordering::Relaxed) as *const usize;
+    assert!(
+        !exports.is_null(),
+        "the SA-MP server exports are not available before Load()"
+    );
+    exports
 }
 
-pub fn amx_load(amx: *mut AMX, natives: &[AMX_NATIVE_INFO]) {
-    let rt = Runtime::get();
-    let plugin = Runtime::plugin();
-
-    let amx = rt.insert_amx(amx).unwrap();
-    let _ = amx.register(natives); // don't care about errors, that function always raises errors.
-
-    plugin.on_amx_load(amx);
-}
-
-pub fn amx_unload(amx: *mut AMX) {
-    let rt = Runtime::get();
-    let plugin = Runtime::plugin();
-
-    if let Some(amx) = rt.remove_amx(amx) {
-        plugin.on_amx_unload(&amx);
+pub fn amx_exports() -> usize {
+    unsafe {
+        server_exports()
+            .offset(ServerData::AmxExports.into())
+            .read()
     }
 }
 
-#[inline]
-pub fn process_tick() {
-    let plugin = Runtime::plugin();
-    plugin.process_tick();
+fn logprintf() -> Logprintf {
+    unsafe {
+        (server_exports().offset(ServerData::Logprintf.into()) as *const Logprintf).read()
+    }
+}
+
+pub(crate) fn log<T: Display>(message: T) {
+    if let Ok(cstr) = CString::new(message.to_string()) {
+        logprintf()(cstr.as_ptr());
+    }
+}
+
+pub fn amx_load(amx: *mut AMX, natives: &[AMX_NATIVE_INFO]) -> Amx {
+    let amx = crate::amx::insert(amx);
+    let _ = amx.register(natives); // don't care about errors, that function always raises errors.
+    amx
+}
+
+pub fn amx_unload(amx: *mut AMX) -> Option<Amx> {
+    crate::amx::remove(amx)
 }

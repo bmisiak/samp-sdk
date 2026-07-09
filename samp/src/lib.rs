@@ -5,6 +5,11 @@
 //! * `samp-codegen` generates raw `extern "C"` functions and does whole nasty job.
 //! * `samp-sdk` contains all types to work with amx.
 //!
+//! # design
+//! There is no plugin object: natives and lifecycle hooks are free functions,
+//! and plugin state lives in `thread_local!` storage (SA-MP plugins run on
+//! the server's main thread).
+//!
 //! # usage
 //! * [install](https://rustup.rs) rust compiler (supports only `i686` os versions because of samp server arch).
 //! * add in your `Cargo.toml` this:
@@ -13,41 +18,34 @@
 //! crate-type = ["cdylib"] # or dylib
 //!
 //! [dependencies]
-//! samp = "0.2.5"
+//! samp = "0.2"
 //! ```
 //! * write your first plugin
 //!
 //! # examples
-//! * simple memcache plugin in `plugin-example` folder.
 //! * your `lib.rs` file
-//! ```rust,compile_fail
+//! ```rust,no_run
 //! use samp::prelude::*; // export most useful types
 //! use samp::{native, initialize_plugin}; // codegen macros
 //!
-//! struct Plugin;
+//! #[native(name = "TestNative")]
+//! fn my_native(_amx: &Amx, text: AmxString) -> AmxResult<bool> {
+//!     let text = text.to_string(); // convert amx string into rust string
+//!     println!("rust plugin: {}", text);
 //!
-//! impl SampPlugin for Plugin {
-//!     // this function executed when samp server loads your plugin
-//!     fn on_load(&mut self) {
-//!         println!("Plugin is loaded.");
-//!     }
+//!     Ok(true)
 //! }
 //!
-//! impl Plugin {
-//!     #[native(name = "TestNative")]
-//!     fn my_native(&mut self, _amx: &Amx, text: AmxString) -> AmxResult<bool> {
-//!         let text = text.to_string(); // convert amx string into rust string
-//!         println!("rust plugin: {}", text);
-//!
-//!         Ok(true)
-//!     }
+//! fn each_tick() {
+//!     // called by the server every tick
 //! }
 //!
 //! initialize_plugin!(
-//!     natives: [Plugin::my_native],
+//!     natives: [my_native],
+//!     process_tick: each_tick, // optional; enables PROCESS_TICK support
 //!     {
-//!         let plugin = Plugin; // create a plugin object
-//!         return plugin; // return the plugin into runtime
+//!         // setup block, runs in Load(): configure logging etc.
+//!         println!("Plugin is loaded.");
 //!     }
 //! );
 //! ```
@@ -56,11 +54,10 @@ pub mod amx;
 #[doc(hidden)]
 pub mod interlayer;
 pub mod plugin;
-pub(crate) mod runtime;
 
 pub use samp_codegen::{initialize_plugin, native};
 pub use samp_sdk::{args, cell, consts, error, exports, raw};
-pub use samp_sdk::{exec_public}; // macros
+pub use samp_sdk::exec_public; // macros
 
 #[cfg(feature = "encoding")]
 pub use samp_sdk::encoding;
@@ -70,5 +67,4 @@ pub mod prelude {
     pub use crate::amx::{Amx, AmxExt};
     pub use crate::cell::{AmxCell, AmxString, Buffer, Ref, UnsizedBuffer};
     pub use crate::error::AmxResult;
-    pub use crate::plugin::SampPlugin;
 }

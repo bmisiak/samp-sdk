@@ -18,6 +18,10 @@ pub struct AmxString<'amx> {
 
 impl<'amx> AmxString<'amx> {
     /// Create a new AmxString from an allocated buffer and fill it with a string
+    ///
+    /// # Safety
+    /// `buffer` must have room for `bytes.len() + 1` cells (the string plus
+    /// its zero terminator).
     pub unsafe fn new(mut buffer: Buffer<'amx>, bytes: &[u8]) -> AmxString<'amx> {
         // let _ = put_in_buffer(&mut buffer, string); // here can't be an error.
         for (idx, byte) in bytes.iter().enumerate() {
@@ -40,7 +44,7 @@ impl<'amx> AmxString<'amx> {
             let mut ptr = self.inner.as_ptr();
             let mut mark = 3;
             for _ in 0..self.len {
-                let ch = (unsafe { *ptr } >> mark * 8) as u8;
+                let ch = (unsafe { *ptr } >> (mark * 8)) as u8;
                 if ch == b'\0' {
                     break;
                 }
@@ -130,6 +134,8 @@ impl<'amx> AmxCell<'amx> for AmxString<'amx> {
         self.inner.as_cell()
     }
 }
+
+impl<'amx> super::repr::AmxCellByRef<'amx> for AmxString<'amx> {}
 
 impl fmt::Display for AmxString<'_> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {

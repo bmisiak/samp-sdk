@@ -139,6 +139,8 @@ impl<'amx> UnsizedBuffer<'amx> {
     }
 }
 
+impl<'amx> super::repr::AmxCellByRef<'amx> for UnsizedBuffer<'amx> {}
+
 impl<'amx> AmxCell<'amx> for UnsizedBuffer<'amx> {
     fn from_raw(amx: &'amx Amx, cell: i32) -> AmxResult<UnsizedBuffer<'amx>> {
         Ok(UnsizedBuffer {

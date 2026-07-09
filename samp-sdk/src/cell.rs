@@ -10,7 +10,7 @@ pub mod repr;
 pub mod string;
 
 pub use buffer::{Buffer, UnsizedBuffer};
-pub use repr::{AmxCell, AmxPrimitive};
+pub use repr::{AmxCell, AmxCellByRef, AmxPrimitive};
 pub use string::AmxString;
 
 /// A reference to a cell in the [`Amx`].
@@ -98,3 +98,5 @@ impl<'amx, T: Sized + AmxPrimitive> AmxCell<'amx> for Ref<'amx, T> {
         self.address()
     }
 }
+
+impl<'amx, T: Sized + AmxPrimitive> repr::AmxCellByRef<'amx> for Ref<'amx, T> {}

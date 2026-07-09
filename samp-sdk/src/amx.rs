@@ -23,7 +23,11 @@ macro_rules! amx_try {
 }
 
 /// A wrapper around a raw pointer to an AMX and exported functions.
-#[derive(Debug, Clone)]
+///
+/// This is a cheap handle (a pointer and a function table address), not an
+/// owner of the VM. Copying it is free; it does not track whether the
+/// underlying AMX is still loaded.
+#[derive(Debug, Clone, Copy)]
 pub struct Amx {
     ptr: *mut AMX,
     fn_table: usize,
@@ -102,7 +106,7 @@ impl Amx {
         Ok(())
     }
 
-    pub(crate) fn allot<T: Sized + AmxPrimitive>(&self, cells: usize) -> AmxResult<Ref<T>> {
+    pub(crate) fn allot<T: Sized + AmxPrimitive>(&self, cells: usize) -> AmxResult<Ref<'_, T>> {
         let allot = Allot::from_table(self.fn_table);
 
         let mut amx_addr = 0;
@@ -139,6 +143,55 @@ impl Amx {
         amx_try!(exec(self.ptr, &mut retval, index.into()));
 
         Ok(retval)
+    }
+
+    /// Push arguments inside the closure, then immediately exec the function.
+    ///
+    /// The [`Allocator`] passed to the closure lives until `amx_Exec` returns,
+    /// so allotted strings and arrays stay valid for the whole call and the
+    /// heap frame is released right after it. If the closure fails, the AMX
+    /// stack pointer and pending argument count are restored, so a partially
+    /// pushed argument list can never leak into a later `exec`.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use samp_sdk::amx::Amx;
+    ///
+    /// # use samp_sdk::error::AmxResult;
+    /// # fn main() -> AmxResult<()> {
+    /// # let amx = Amx::new(std::ptr::null_mut(), 0);
+    /// // forward SomePublicFunc(player_id, message[]);
+    /// let public_fn = amx.find_public("SomePublicFunc")?;
+    ///
+    /// let retval = amx.exec_with_args(public_fn, |allocator| {
+    ///     allocator.amx().push(allocator.allot_string("hello")?)?;
+    ///     allocator.amx().push(10)?;
+    ///     Ok(())
+    /// })?;
+    /// #   Ok(())
+    /// # }
+    /// ```
+    pub fn exec_with_args(
+        &self,
+        index: AmxExecIdx,
+        push_args: impl FnOnce(&Allocator) -> AmxResult<()>,
+    ) -> AmxResult<i32> {
+        let (saved_stk, saved_paramcount) = {
+            let amx = unsafe { self.amx().as_ref() };
+            (amx.stk, amx.paramcount)
+        };
+        let allocator = self.allocator();
+
+        match push_args(&allocator) {
+            Ok(()) => self.exec(index),
+            Err(err) => {
+                let mut amx = self.amx();
+                let amx = unsafe { amx.as_mut() };
+                amx.stk = saved_stk;
+                amx.paramcount = saved_paramcount;
+                Err(err)
+            }
+        }
     }
 
     /// Returns an index of a native by its name.
@@ -198,7 +251,7 @@ impl Amx {
     /// #   Ok(())
     /// # }
     /// ```
-    pub fn find_pubvar<T: Sized + AmxPrimitive>(&self, name: &str) -> AmxResult<Ref<T>> {
+    pub fn find_pubvar<T: Sized + AmxPrimitive>(&self, name: &str) -> AmxResult<Ref<'_, T>> {
         let find_pubvar = FindPubVar::from_table(self.fn_table);
         let c_str = CString::new(name).map_err(|_| AmxError::NotFound)?;
         let mut cell_ptr = 0;
@@ -239,7 +292,7 @@ impl Amx {
     /// ```
     ///
     /// [`Ref<T>`]: ../cell/struct.Ref.html
-    pub fn get_ref<T: Sized + AmxPrimitive>(&self, address: i32) -> AmxResult<Ref<T>> {
+    pub fn get_ref<T: Sized + AmxPrimitive>(&self, address: i32) -> AmxResult<Ref<'_, T>> {
         let get_addr = GetAddr::from_table(self.fn_table);
         let mut dest = 0;
         let mut dest_addr = std::ptr::addr_of_mut!(dest);
@@ -272,7 +325,7 @@ impl Amx {
 
     /// Returns the length of a string in characters
     ///
-    pub fn strlen<'a>(&'a self, value: *const i32) -> AmxResult<usize> {
+    pub fn strlen(&self, value: *const i32) -> AmxResult<usize> {
         let strlen = StrLen::from_table(self.fn_table);
         let mut len = 0;
         amx_try!(strlen(value, &mut len));
@@ -305,7 +358,7 @@ impl Amx {
     /// [`Allocator`]: struct.Allocator.html
     /// [`Amx`]: struct.Amx.html
     pub fn allocator(&self) -> Allocator {
-        Allocator::new(self)
+        Allocator::new(*self)
     }
 
     /// Returns a pointer to a raw [`AMX`] structure.
@@ -324,13 +377,18 @@ impl Amx {
 }
 
 /// AMX memory allocator (on the heap) that frees captured memory after drop.
-pub struct Allocator<'amx> {
-    amx: &'amx Amx,
+///
+/// It owns a copy of the [`Amx`] handle, so it carries no borrow of it. The
+/// references it hands out ([`Ref`], [`Buffer`], [`AmxString`]) borrow the
+/// *allocator*, because dropping the allocator is what releases the heap
+/// frame they point into — they cannot outlive it.
+pub struct Allocator {
+    amx: Amx,
     release_addr: i32,
 }
 
-impl<'amx> Allocator<'amx> {
-    pub(crate) fn new(amx: &'amx Amx) -> Allocator<'amx> {
+impl Allocator {
+    pub(crate) fn new(amx: Amx) -> Allocator {
         let amx_ptr = amx.amx();
         let amx_ptr = unsafe { amx_ptr.as_ref() };
 
@@ -338,6 +396,11 @@ impl<'amx> Allocator<'amx> {
             amx,
             release_addr: amx_ptr.hea,
         }
+    }
+
+    /// The [`Amx`] this allocator allocates on.
+    pub fn amx(&self) -> &Amx {
+        &self.amx
     }
 
     /// Allocate memory for a primitive value.
@@ -365,7 +428,7 @@ impl<'amx> Allocator<'amx> {
     /// #       Ok(())
     /// # }
     /// ```
-    pub fn allot<T: Sized + AmxPrimitive>(&self, init_value: T) -> AmxResult<Ref<T>> {
+    pub fn allot<T: Sized + AmxPrimitive>(&self, init_value: T) -> AmxResult<Ref<'_, T>> {
         let mut cell = self.amx.allot(1)?;
         *cell = init_value;
 
@@ -402,7 +465,7 @@ impl<'amx> Allocator<'amx> {
     /// #
     /// #       Ok(())
     /// # }
-    pub fn allot_buffer(&self, size: usize) -> AmxResult<Buffer> {
+    pub fn allot_buffer(&self, size: usize) -> AmxResult<Buffer<'_>> {
         let buffer = self.amx.allot(size)?;
 
         Ok(Buffer::new(buffer, size))
@@ -433,9 +496,9 @@ impl<'amx> Allocator<'amx> {
     /// #
     /// #       Ok(())
     /// # }
-    pub fn allot_array<T>(&self, array: &[T]) -> AmxResult<Buffer>
+    pub fn allot_array<'alloc, T>(&'alloc self, array: &[T]) -> AmxResult<Buffer<'alloc>>
     where
-        T: AmxCell<'amx> + AmxPrimitive,
+        T: AmxCell<'alloc> + AmxPrimitive,
     {
         let mut buffer = self.allot_buffer(array.len())?;
 
@@ -472,7 +535,7 @@ impl<'amx> Allocator<'amx> {
     /// #
     /// #       Ok(())
     /// # }
-    pub fn allot_string(&self, string: &str) -> AmxResult<AmxString> {
+    pub fn allot_string(&self, string: &str) -> AmxResult<AmxString<'_>> {
         let bytes = Allocator::string_bytes(string);
         let buffer = self.allot_buffer(bytes.len() + 1)?;
 
@@ -488,7 +551,7 @@ impl<'amx> Allocator<'amx> {
     }
 }
 
-impl Drop for Allocator<'_> {
+impl Drop for Allocator {
     fn drop(&mut self) {
         // AMX::release never fails
         self.amx.release(self.release_addr);
