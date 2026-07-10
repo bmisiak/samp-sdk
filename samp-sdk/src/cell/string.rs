@@ -1,4 +1,5 @@
 //! String interperation inside an AMX.
+use std::ffi::CString;
 use std::fmt;
 
 use super::{AmxCell, Buffer, UnsizedBuffer};
@@ -9,7 +10,17 @@ use crate::encoding;
 
 const MAX_UNPACKED: i32 = 0x00FF_FFFF;
 
-// A wrapper around an AMX string.
+/// A wrapper around an AMX string.
+///
+/// Like `CStr`, this is a zero-terminated *byte* string: PAWN strings carry
+/// whatever bytes the server's locale produced (cp1252 chat, player names,
+/// …) and are **not** UTF-8. There is deliberately no `Display`/`ToString`:
+/// [`to_bytes`] and [`to_cstring`] return the truth, and the only path to a
+/// Rust `String` is the explicitly named [`to_string_lossy`].
+///
+/// [`to_bytes`]: #method.to_bytes
+/// [`to_cstring`]: #method.to_cstring
+/// [`to_string_lossy`]: #method.to_string_lossy
 pub struct AmxString<'amx> {
     inner: Buffer<'amx>,
     // real length of the string
@@ -17,21 +28,25 @@ pub struct AmxString<'amx> {
 }
 
 impl<'amx> AmxString<'amx> {
-    /// Create a new AmxString from an allocated buffer and fill it with a string
+    /// Create a new AmxString from an allocated buffer and fill it with a string.
     ///
-    /// # Safety
-    /// `buffer` must have room for `bytes.len() + 1` cells (the string plus
-    /// its zero terminator).
-    pub unsafe fn new(mut buffer: Buffer<'amx>, bytes: &[u8]) -> AmxString<'amx> {
-        // let _ = put_in_buffer(&mut buffer, string); // here can't be an error.
+    /// # Panics
+    /// Panics when the buffer is smaller than `bytes.len() + 1` cells (the
+    /// string plus its zero terminator).
+    pub fn new(buffer: Buffer<'amx>, bytes: &[u8]) -> AmxString<'amx> {
+        assert!(
+            buffer.len() > bytes.len(),
+            "the buffer has no room for the string and its zero terminator"
+        );
+
         for (idx, byte) in bytes.iter().enumerate() {
-            buffer[idx] = i32::from(*byte);
+            buffer.set(idx, i32::from(*byte));
         }
 
-        buffer[bytes.len()] = 0;
+        buffer.set(bytes.len(), 0);
 
         AmxString {
-            len: buffer.len(),
+            len: bytes.len(),
             inner: buffer,
         }
     }
@@ -40,7 +55,7 @@ impl<'amx> AmxString<'amx> {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut vec = Vec::with_capacity(self.len);
         // packed string
-        if self.inner[0] > MAX_UNPACKED {
+        if !self.inner.is_empty() && self.inner.get(0) > MAX_UNPACKED {
             let mut ptr = self.inner.as_ptr();
             let mut mark = 3;
             for _ in 0..self.len {
@@ -55,16 +70,36 @@ impl<'amx> AmxString<'amx> {
                 }
             }
         } else {
-            for item in self.inner.iter().take(self.len) {
-                vec.push(*item as u8);
+            for cell in &self.inner.as_cells()[..self.len] {
+                vec.push(cell.get() as u8);
             }
         }
 
         vec
     }
 
-    /// Convert an AMX string to a `String`.
-    /// Only ASCII chars by default. Pass `cp1251` to crate features to enable Windows 1251 encoding (TODO).
+    /// Copy the string into an owned [`CString`], e.g. for [`find_public`].
+    ///
+    /// PAWN strings are sequences of 32-bit cells, so a cell whose low byte
+    /// is zero (e.g. the value 256) would embed an interior NUL; the copy
+    /// stops there, mirroring what any C consumer of the bytes sees.
+    ///
+    /// [`CString`]: https://doc.rust-lang.org/std/ffi/struct.CString.html
+    /// [`find_public`]: ../../amx/struct.Amx.html#method.find_public
+    pub fn to_cstring(&self) -> CString {
+        let mut bytes = self.to_bytes();
+        if let Some(nul) = bytes.iter().position(|byte| *byte == 0) {
+            bytes.truncate(nul);
+        }
+        CString::new(bytes).expect("interior NUL bytes were truncated above")
+    }
+
+    /// Decode the AMX string into a Rust `String`.
+    ///
+    /// AMX strings are raw bytes in the server's locale encoding, not UTF-8.
+    /// Without the `encoding` feature, bytes that don't form valid UTF-8 are
+    /// replaced with U+FFFD; enable `encoding` to decode a configured code
+    /// page (e.g. cp1251) instead.
     ///
     /// # Example
     /// ```
@@ -76,30 +111,19 @@ impl<'amx> AmxString<'amx> {
     /// #       String::from("Today")
     /// # }
     ///
-    /// # struct Plugin {
-    /// #     logger_enabled: bool,
-    /// # }
-    /// #
-    /// # impl Plugin {
-    ///
-    /// fn log_error(&self, amx: &Amx, text: AmxString) -> AmxResult<bool> {
-    ///     if !self.logger_enabled {
-    ///         return Ok(false);
-    ///     }
-    ///
-    ///     let string = text.to_string();
+    /// fn log_error(amx: Amx, text: AmxString) -> AmxResult<bool> {
+    ///     let string = text.to_string_lossy();
     ///     println!("[{}] PluginName error: {}", current_date(), string);
     ///
     ///     Ok(true)
     /// }
-    /// # }
     /// ```
-    pub fn to_string(&self) -> String {
+    pub fn to_string_lossy(&self) -> String {
         #[cfg(feature = "encoding")]
         return encoding::get().decode(&self.to_bytes()).0.into_owned();
 
         #[cfg(not(feature = "encoding"))]
-        return unsafe { String::from_utf8_unchecked(self.to_bytes()) };
+        return String::from_utf8_lossy(&self.to_bytes()).into_owned();
     }
 
     /// Return a length of a string.
@@ -118,14 +142,14 @@ impl<'amx> AmxString<'amx> {
 }
 
 impl<'amx> AmxCell<'amx> for AmxString<'amx> {
-    fn from_raw(amx: &'amx Amx, cell: i32) -> AmxResult<AmxString<'amx>> {
+    fn from_raw(amx: Amx<'amx>, cell: i32) -> AmxResult<AmxString<'amx>> {
         let buffer = UnsizedBuffer::from_raw(amx, cell)?;
         let ptr = buffer.as_ptr();
         let str_len = amx.strlen(ptr)?;
         let buf_len = str_len + 1;
 
         Ok(AmxString {
-            inner: buffer.into_sized_buffer(buf_len),
+            inner: buffer.into_sized_buffer(buf_len)?,
             len: str_len,
         })
     }
@@ -137,9 +161,11 @@ impl<'amx> AmxCell<'amx> for AmxString<'amx> {
 
 impl<'amx> super::repr::AmxCellByRef<'amx> for AmxString<'amx> {}
 
-impl fmt::Display for AmxString<'_> {
+// No `Display` on purpose: it would hand out a lossy conversion through the
+// innocent-looking auto-implemented `.to_string()`. `Debug` escapes instead.
+impl fmt::Debug for AmxString<'_> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "{}", self.to_string())
+        write!(fmt, "\"{}\"", self.to_bytes().escape_ascii())
     }
 }
 
@@ -153,13 +179,12 @@ impl fmt::Display for AmxString<'_> {
 /// # use samp_sdk::amx::Amx;
 ///
 /// # fn main() -> AmxResult<()> {
-/// # let amx = Amx::new(std::ptr::null_mut(), 0);
-/// // let mut buffer = ...;
+/// # let amx = unsafe { Amx::new(std::ptr::null_mut(), 0) };
 /// // let amx = ...;
 /// let allocator = amx.allocator();
-/// let mut buffer = allocator.allot_buffer(25)?; // let's think that we got a mutable buffer from a native function input.
+/// let buffer = allocator.allot_buffer(25)?; // let's think that we got a buffer from a native function input.
 /// let string = "Hello, world!".to_string();
-/// string::put_in_buffer(&mut buffer, &string)?; // store string in the AMX heap.
+/// string::put_in_buffer(&buffer, &string)?; // store string in the AMX heap.
 ///
 ///
 /// #   Ok(())
@@ -167,10 +192,10 @@ impl fmt::Display for AmxString<'_> {
 /// ```
 /// # Errors
 /// Return `AmxError::General` when length of string bytes is more than size of the buffer.
-pub fn put_in_buffer(buffer: &mut Buffer, string: &str) -> AmxResult<()> {
+pub fn put_in_buffer(buffer: &Buffer, string: &str) -> AmxResult<()> {
     #[cfg(feature = "encoding")]
     let bytes = encoding::get().encode(string).0;
-    
+
     #[cfg(not(feature = "encoding"))]
     let bytes = std::borrow::Cow::from(string.as_bytes());
 
@@ -181,10 +206,10 @@ pub fn put_in_buffer(buffer: &mut Buffer, string: &str) -> AmxResult<()> {
     }
 
     for (idx, byte) in bytes.iter().enumerate() {
-        buffer[idx] = i32::from(*byte);
+        buffer.set(idx, i32::from(*byte));
     }
 
-    buffer[bytes.len()] = 0;
+    buffer.set(bytes.len(), 0);
 
     Ok(())
 }

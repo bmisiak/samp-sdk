@@ -13,10 +13,9 @@
 /// use samp_sdk::exec_public;
 /// # use samp_sdk::amx::Amx;
 /// #
-/// # let amx_owned = Amx::new(std::ptr::null_mut(), 0);
-/// # let amx = &amx_owned;
+/// # let amx = unsafe { Amx::new(std::ptr::null_mut(), 0) };
 ///
-/// exec_public!(amx, "SomePublicFunction");
+/// exec_public!(amx, c"SomePublicFunction");
 /// ```
 ///
 /// With arguments that implement `AmxCell`.
@@ -27,9 +26,9 @@
 /// # use samp_sdk::error::AmxResult;
 ///
 /// // native:CallPublic(const publicname[], const string[], buffer[], length, &someref);
-/// fn call_public(amx: &Amx, pub_name: AmxString, string: AmxString, buffer: UnsizedBuffer, size: usize, reference: Ref<usize>) -> AmxResult<bool> {
-///     let buffer = buffer.into_sized_buffer(size);
-///     let public_name = pub_name.to_string();
+/// fn call_public(amx: Amx, pub_name: AmxString, string: AmxString, buffer: UnsizedBuffer, size: usize, reference: Ref<usize>) -> AmxResult<bool> {
+///     let buffer = buffer.into_sized_buffer(size)?;
+///     let public_name = pub_name.to_cstring();
 ///
 ///     exec_public!(amx, &public_name, string, buffer, reference);
 ///     Ok(true)
@@ -43,8 +42,8 @@
 /// # use samp_sdk::error::AmxResult;
 ///
 /// // native:CallPublic(const publicname[], const string[]);
-/// fn call_public(amx: &Amx, pub_name: AmxString, string: AmxString) -> AmxResult<bool> {
-///     let public_name = pub_name.to_string();
+/// fn call_public(amx: Amx, pub_name: AmxString, string: AmxString) -> AmxResult<bool> {
+///     let public_name = pub_name.to_cstring();
 ///     let rust_string = "hello!";
 ///     let owned_string = "another hello!".to_string();
 ///     let rust_array = vec![1, 2, 3, 4, 5];

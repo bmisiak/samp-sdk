@@ -113,29 +113,31 @@ pub fn create_native(args: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     let call_origin = if native.raw {
-        quote!(#origin_name(&amx, args))
+        quote!(#origin_name(amx, args))
     } else {
-        quote!(#origin_name(&amx, #(#param_idents),*))
+        quote!(#origin_name(amx, #(#param_idents),*))
     };
 
     let native_generated = quote! {
         #vis extern "C" fn #native_name(amx: *mut samp::raw::types::AMX, args: *mut i32) -> i32 {
-            // An `Amx` is just the raw pointer plus the exports table, so
-            // build it directly instead of consulting the AMX registry. This
-            // also covers AMX instances that never went through `AmxLoad`
-            // (e.g. when called through the GDK).
-            let amx = samp::amx::Amx::new(amx, samp::plugin::amx_exports());
-            let #args_binding = samp::args::Args::new(&amx, args);
+            let Some(amx) = std::ptr::NonNull::new(amx) else {
+                return 0;
+            };
+            // `enter` brands the Amx with this call's scope, so the native
+            // can't store it — only `.handle()` escapes.
+            samp::amx::enter(amx, |amx| {
+                let #args_binding = samp::args::Args::new(amx, args);
 
-            #(#args_parsing)*
+                #(#args_parsing)*
 
-            match #call_origin {
-                Ok(retval) => samp::plugin::convert_return_value(retval),
-                Err(err) => {
-                    println!("{} error: {}", #amx_name, err);
-                    0
+                match #call_origin {
+                    Ok(retval) => samp::plugin::convert_return_value(retval),
+                    Err(err) => {
+                        println!("{} error: {}", #amx_name, err);
+                        0
+                    }
                 }
-            }
+            })
         }
     };
 

@@ -8,7 +8,7 @@ pub trait AmxCell<'amx>
 where
     Self: Sized,
 {
-    fn from_raw(_amx: &'amx Amx, _cell: i32) -> AmxResult<Self>
+    fn from_raw(_amx: Amx<'amx>, _cell: i32) -> AmxResult<Self>
     where
         Self: 'amx,
     {
@@ -38,11 +38,11 @@ pub trait AmxCellByRef<'amx>: AmxCell<'amx> {}
 /// There is no values that's bigger than 4 bytes, because size of an AMX cell is 32 bits.
 ///
 /// # Safety
-/// Implementors must be plain values that fit in a single 32-bit AMX cell,
-/// because they are read from and written to raw cell memory as-is.
+/// Implementors must be plain `Copy` values that fit in a single 32-bit AMX
+/// cell, because they are read from and written to raw cell memory as-is.
 pub unsafe trait AmxPrimitive
 where
-    Self: Sized,
+    Self: Sized + Copy,
 {
 }
 
@@ -60,8 +60,8 @@ impl<'a, T: AmxCell<'a>> AmxCell<'a> for &'a mut T {
 
 macro_rules! impl_for_primitive {
     ($type:ty) => {
-        impl AmxCell<'_> for $type {
-            fn from_raw(_amx: &Amx, cell: i32) -> AmxResult<Self> {
+        impl<'amx> AmxCell<'amx> for $type {
+            fn from_raw(_amx: Amx<'amx>, cell: i32) -> AmxResult<Self> {
                 Ok(cell as Self)
             }
 
@@ -83,8 +83,8 @@ impl_for_primitive!(u32);
 impl_for_primitive!(usize);
 impl_for_primitive!(isize);
 
-impl AmxCell<'_> for f32 {
-    fn from_raw(_amx: &Amx, cell: i32) -> AmxResult<f32> {
+impl<'amx> AmxCell<'amx> for f32 {
+    fn from_raw(_amx: Amx<'amx>, cell: i32) -> AmxResult<f32> {
         Ok(f32::from_bits(cell as u32))
     }
 
@@ -95,8 +95,8 @@ impl AmxCell<'_> for f32 {
     }
 }
 
-impl AmxCell<'_> for bool {
-    fn from_raw(_amx: &Amx, cell: i32) -> AmxResult<bool> {
+impl<'amx> AmxCell<'amx> for bool {
+    fn from_raw(_amx: Amx<'amx>, cell: i32) -> AmxResult<bool> {
         // just to be sure that boolean value will be correct I don't use there `std::mem::transmute` or `as` keyword.
         Ok(cell != 0)
     }

@@ -111,22 +111,26 @@ pub fn create_plugin(input: TokenStream) -> TokenStream {
 
     let amx_load_body = match plugin.on_amx_load {
         Some(path) => quote! {
-            let amx = samp::interlayer::amx_load(amx, &natives);
-            #path(&amx);
-        },
-        None => quote! {
-            let _ = samp::interlayer::amx_load(amx, &natives);
-        },
-    };
-
-    let amx_unload_body = match plugin.on_amx_unload {
-        Some(path) => quote! {
-            if let Some(amx) = samp::interlayer::amx_unload(amx) {
-                #path(&amx);
+            samp::interlayer::amx_load(amx, &natives);
+            if let Some(amx) = std::ptr::NonNull::new(amx) {
+                samp::amx::enter(amx, |amx| #path(amx));
             }
         },
         None => quote! {
-            let _ = samp::interlayer::amx_unload(amx);
+            samp::interlayer::amx_load(amx, &natives);
+        },
+    };
+
+    // The hook runs before unregistration so `amx.handle()` still resolves.
+    let amx_unload_body = match plugin.on_amx_unload {
+        Some(path) => quote! {
+            if let Some(amx) = std::ptr::NonNull::new(amx) {
+                samp::amx::enter(amx, |amx| #path(amx));
+            }
+            samp::interlayer::amx_unload(amx);
+        },
+        None => quote! {
+            samp::interlayer::amx_unload(amx);
         },
     };
 

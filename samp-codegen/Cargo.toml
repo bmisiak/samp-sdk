@@ -6,7 +6,7 @@ description = "Codegen for samp-rs"
 license = "MIT"
 repository = "https://github.com/zottce/samp-rs/"
 readme = "readme.md"
-edition = "2018"
+edition = "2021"
 
 [lib]
 proc-macro = true

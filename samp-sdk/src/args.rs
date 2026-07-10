@@ -4,7 +4,7 @@ use crate::cell::{AmxCell, AmxCellByRef};
 
 /// A wrapper of a list of arguments of a native function.
 pub struct Args<'a> {
-    amx: &'a Amx,
+    amx: Amx<'a>,
     args: *const i32,
     offset: usize,
 }
@@ -23,11 +23,11 @@ impl<'a> Args<'a> {
     /// extern "C" fn raw_native(amx: *mut AMX, args: *mut i32) -> i32 {
     ///     # let amx_exports = 0;
     ///     // let amx_exports = ...;
-    ///     let amx = Amx::new(amx, amx_exports);
-    ///     let mut args = Args::new(&amx, args);
+    ///     let amx = unsafe { Amx::new(amx, amx_exports) };
+    ///     let mut args = Args::new(amx, args);
     ///
     ///     let say_what = match args.next_arg::<AmxString>() {
-    ///         Some(string) => string.to_string(),
+    ///         Some(string) => string.to_string_lossy(),
     ///         None => {
     ///             println!("RawNative error: no argument");
     ///             return 0;
@@ -41,7 +41,7 @@ impl<'a> Args<'a> {
     /// ```
     ///
     /// [`Amx`]: ../amx/struct.Amx.html
-    pub fn new(amx: &'a Amx, args: *const i32) -> Args<'a> {
+    pub fn new(amx: Amx<'a>, args: *const i32) -> Args<'a> {
         Args {
             amx,
             args,
@@ -86,12 +86,12 @@ impl<'a> Args<'a> {
     /// extern "C" fn raw_native(amx: *mut AMX, args: *mut i32) -> i32 {
     ///     # let amx_exports = 0;
     ///     // let amx_exports = ...;
-    ///     let amx = Amx::new(amx, amx_exports);
-    ///     let args = Args::new(&amx, args);
+    ///     let amx = unsafe { Amx::new(amx, amx_exports) };
+    ///     let args = Args::new(amx, args);
     ///
     ///     // change only armor
     ///     args.get::<Ref<f32>>(2)
-    ///         .map(|mut armor| *armor = 255.0);
+    ///         .map(|armor| armor.set(255.0));
     ///
     ///     return 1;
     /// }

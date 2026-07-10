@@ -29,8 +29,8 @@
 //! use samp::{native, initialize_plugin}; // codegen macros
 //!
 //! #[native(name = "TestNative")]
-//! fn my_native(_amx: &Amx, text: AmxString) -> AmxResult<bool> {
-//!     let text = text.to_string(); // convert amx string into rust string
+//! fn my_native(_amx: Amx, text: AmxString) -> AmxResult<bool> {
+//!     let text = text.to_string_lossy(); // decode amx bytes into a rust string
 //!     println!("rust plugin: {}", text);
 //!
 //!     Ok(true)
@@ -64,7 +64,7 @@ pub use samp_sdk::encoding;
 
 pub mod prelude {
     //! Most used imports.
-    pub use crate::amx::{Amx, AmxExt};
+    pub use crate::amx::{Amx, AmxExt, AmxHandle};
     pub use crate::cell::{AmxCell, AmxString, Buffer, Ref, UnsizedBuffer};
     pub use crate::error::AmxResult;
 }

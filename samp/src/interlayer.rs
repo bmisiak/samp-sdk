@@ -9,8 +9,6 @@ use samp_sdk::consts::{ServerData, Supports};
 use samp_sdk::raw::functions::Logprintf;
 use samp_sdk::raw::types::{AMX, AMX_NATIVE_INFO};
 
-use crate::amx::Amx;
-
 /// The server's export table, set once in `Load()` before anything else runs.
 static SERVER_EXPORTS: AtomicUsize = AtomicUsize::new(0);
 
@@ -57,12 +55,15 @@ pub(crate) fn log<T: Display>(message: T) {
     }
 }
 
-pub fn amx_load(amx: *mut AMX, natives: &[AMX_NATIVE_INFO]) -> Amx {
-    let amx = crate::amx::insert(amx);
-    let _ = amx.register(natives); // don't care about errors, that function always raises errors.
-    amx
+pub fn amx_load(amx: *mut AMX, natives: &[AMX_NATIVE_INFO]) {
+    let Some(amx) = std::ptr::NonNull::new(amx) else {
+        return;
+    };
+    crate::amx::enter(amx, |amx| {
+        let _ = amx.register(natives); // don't care about errors, that function always raises errors.
+    });
 }
 
-pub fn amx_unload(amx: *mut AMX) -> Option<Amx> {
-    crate::amx::remove(amx)
+pub fn amx_unload(amx: *mut AMX) {
+    crate::amx::unregister(amx);
 }
