@@ -91,9 +91,9 @@ pub fn create_native(args: TokenStream, input: TokenStream) -> TokenStream {
             .map(|ident| {
                 quote_spanned! { ident.span() =>
                     let Some(#ident) = args.next_arg() else {
-                        println!(
-                            "{} error: couldn't parse the {:?} argument.",
-                            #amx_name, stringify!(#ident),
+                        samp::plugin::log_native_error(
+                            #amx_name,
+                            format_args!("couldn't parse the {} argument", stringify!(#ident)),
                         );
                         return 0;
                     };
@@ -130,10 +130,10 @@ pub fn create_native(args: TokenStream, input: TokenStream) -> TokenStream {
 
                 #(#args_parsing)*
 
-                match #call_origin {
-                    Ok(retval) => samp::plugin::convert_return_value(retval),
+                match samp::plugin::NativeReturn::into_return(#call_origin) {
+                    Ok(cell) => cell,
                     Err(err) => {
-                        println!("{} error: {}", #amx_name, err);
+                        samp::plugin::log_native_error(#amx_name, err);
                         0
                     }
                 }
