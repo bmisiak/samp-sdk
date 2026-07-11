@@ -3,6 +3,7 @@
 //! `initialize_plugin!` generates.
 use std::ffi::CString;
 use std::fmt::Display;
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use samp_sdk::consts::{ServerData, Supports};
@@ -22,12 +23,15 @@ pub fn supports(process_tick: bool) -> u32 {
     supports.bits()
 }
 
-pub fn load(server_data: *const usize) {
-    SERVER_EXPORTS.store(server_data as usize, Ordering::Relaxed);
+/// # Safety
+/// `server_data` must be the server export table and remain valid until the
+/// plugin unloads.
+pub unsafe fn load(server_data: NonNull<usize>) {
+    SERVER_EXPORTS.store(server_data.as_ptr() as usize, Ordering::Release);
 }
 
 fn server_exports() -> *const usize {
-    let exports = SERVER_EXPORTS.load(Ordering::Relaxed) as *const usize;
+    let exports = SERVER_EXPORTS.load(Ordering::Acquire) as *const usize;
     assert!(
         !exports.is_null(),
         "the SA-MP server exports are not available before Load()"
@@ -35,12 +39,13 @@ fn server_exports() -> *const usize {
     exports
 }
 
-pub fn amx_exports() -> usize {
-    unsafe {
+pub fn amx_exports() -> NonNull<usize> {
+    let exports = unsafe {
         server_exports()
             .offset(ServerData::AmxExports.into())
             .read()
-    }
+    } as *mut usize;
+    NonNull::new(exports).expect("the server supplied a null AMX export table")
 }
 
 fn logprintf() -> Logprintf {
@@ -51,17 +56,25 @@ fn logprintf() -> Logprintf {
 
 pub(crate) fn log<T: Display>(message: T) {
     if let Ok(cstr) = CString::new(message.to_string()) {
-        logprintf()(cstr.as_ptr());
+        // SAFETY: `Load` installed the server's `logprintf`; both strings
+        // remain alive and NUL-terminated, and the fixed format consumes the
+        // one supplied pointer.
+        unsafe { logprintf()(c"%s".as_ptr(), cstr.as_ptr()) };
     }
 }
 
-pub fn amx_load(amx: *mut AMX, natives: &[AMX_NATIVE_INFO]) {
+/// # Safety
+/// `amx` must be the VM currently being loaded by the server.
+pub unsafe fn amx_load(amx: *mut AMX, natives: &[AMX_NATIVE_INFO]) {
     let Some(amx) = std::ptr::NonNull::new(amx) else {
         return;
     };
-    crate::amx::enter(amx, |amx| {
-        let _ = amx.register(natives); // don't care about errors, that function always raises errors.
-    });
+    // SAFETY: this is called only from the server's AmxLoad entrypoint.
+    unsafe {
+        crate::amx::enter(amx, |amx| {
+            let _ = amx.register(natives); // registration raises its own AMX errors
+        });
+    }
 }
 
 pub fn amx_unload(amx: *mut AMX) {

@@ -42,7 +42,7 @@ impl Parse for NativeName {
     }
 }
 
-/// Generates, next to a free function `fn foo(amx: &Amx, ...) -> AmxResult<T>`,
+/// Generates, next to a free function `fn foo(amx: Amx, ...) -> Result<T, E>`,
 /// an `extern "C"` wrapper that builds the `Amx` handle and parses the
 /// arguments, plus a `__samp_reg_foo()` constructor of `AMX_NATIVE_INFO`
 /// for `initialize_plugin!`.
@@ -66,9 +66,18 @@ pub fn create_native(args: TokenStream, input: TokenStream) -> TokenStream {
     let origin_name = &origin_fn.sig.ident;
     let native_name = prepend(origin_name, NATIVE_PREFIX);
     let reg_name = prepend(origin_name, REG_PREFIX);
-    let amx_name = &native.name;
+    let amx_name = if native.name.is_empty() {
+        origin_name.to_string()
+    } else {
+        native.name
+    };
+    if amx_name.as_bytes().contains(&0) {
+        return Error::new(origin_name.span(), "a native name cannot contain a NUL byte")
+            .to_compile_error()
+            .into();
+    }
 
-    // Parameters after the first one (`amx: &Amx`).
+    // Parameters after the first one (`amx: Amx`).
     let param_idents: Vec<&Ident> = origin_fn
         .sig
         .inputs
@@ -90,12 +99,19 @@ pub fn create_native(args: TokenStream, input: TokenStream) -> TokenStream {
             .iter()
             .map(|ident| {
                 quote_spanned! { ident.span() =>
-                    let Some(#ident) = args.next_arg() else {
-                        samp::plugin::log_native_error(
-                            #amx_name,
-                            format_args!("couldn't parse the {} argument", stringify!(#ident)),
-                        );
-                        return 0;
+                    let #ident = match args.next_arg() {
+                        Ok(value) => value,
+                        Err(error) => {
+                            samp::plugin::log_native_error(
+                                #amx_name,
+                                format_args!(
+                                    "couldn't parse the {} argument: {}",
+                                    stringify!(#ident),
+                                    error,
+                                ),
+                            );
+                            return 0;
+                        }
                     };
                 }
             })
@@ -119,14 +135,26 @@ pub fn create_native(args: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     let native_generated = quote! {
-        #vis extern "C" fn #native_name(amx: *mut samp::raw::types::AMX, args: *mut i32) -> i32 {
+        #vis unsafe extern "C" fn #native_name(amx: *mut samp::raw::types::AMX, args: *const i32) -> i32 {
             let Some(amx) = std::ptr::NonNull::new(amx) else {
+                return 0;
+            };
+            let Some(args) = std::ptr::NonNull::new(args.cast_mut()) else {
                 return 0;
             };
             // `enter` brands the Amx with this call's scope, so the native
             // can't store it — only `.handle()` escapes.
-            samp::amx::enter(amx, |amx| {
-                let #args_binding = samp::args::Args::new(amx, args);
+            unsafe { samp::amx::enter(amx, |amx| {
+                let #args_binding = match unsafe { samp::args::Args::new(amx, args) } {
+                    Ok(args) => args,
+                    Err(error) => {
+                        samp::plugin::log_native_error(
+                            #amx_name,
+                            format_args!("invalid argument list: {}", error),
+                        );
+                        return 0;
+                    }
+                };
 
                 #(#args_parsing)*
 
@@ -137,14 +165,14 @@ pub fn create_native(args: TokenStream, input: TokenStream) -> TokenStream {
                         0
                     }
                 }
-            })
+            }) }
         }
     };
 
     let reg_native = quote! {
         #vis fn #reg_name() -> samp::raw::types::AMX_NATIVE_INFO {
             samp::raw::types::AMX_NATIVE_INFO {
-                name: std::ffi::CString::new(#amx_name).unwrap().into_raw(),
+                name: concat!(#amx_name, "\0").as_ptr().cast(),
                 func: #native_name,
             }
         }

@@ -91,21 +91,25 @@ pub fn with<R>(handle: AmxHandle, scope: impl for<'amx> FnOnce(Amx<'amx>) -> R) 
 
     // SAFETY: registered right now, and the server only unloads AMXes
     // between the plugin entry points that maintain the registry.
-    let amx = unsafe { Amx::new(handle.ptr, crate::interlayer::amx_exports()) };
+    let ptr = NonNull::new(handle.ptr)?;
+    let amx = unsafe { Amx::new(ptr, crate::interlayer::amx_exports()) };
     Some(scope(amx))
 }
 
-/// Lend a usable [`Amx`] for the duration of a server-initiated call into
-/// the plugin. Called by the wrappers `#[native]` and `initialize_plugin!`
-/// generate; `amx` must be the pointer the server just passed in.
-pub fn enter<R>(amx: NonNull<AMX>, scope: impl for<'amx> FnOnce(Amx<'amx>) -> R) -> R {
+/// Lend a usable [`Amx`] for one server-initiated call into the plugin.
+///
+/// # Safety
+/// `amx` must identify a loaded VM that remains alive until `scope` returns.
+/// Generated native and lifecycle wrappers establish that invariant.
+#[doc(hidden)]
+pub unsafe fn enter<R>(amx: NonNull<AMX>, scope: impl for<'amx> FnOnce(Amx<'amx>) -> R) -> R {
     // Natives can fire for an AMX that never went through AmxLoad (GDK).
     if generation_of(amx.as_ptr()).is_none() {
         register(amx.as_ptr());
     }
 
     // SAFETY: the server is mid-call into us on behalf of this AMX.
-    let usable = unsafe { Amx::new(amx.as_ptr(), crate::interlayer::amx_exports()) };
+    let usable = unsafe { Amx::new(amx, crate::interlayer::amx_exports()) };
     scope(usable)
 }
 

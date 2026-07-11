@@ -1,14 +1,18 @@
-//! String interperation inside an AMX.
+//! String representation inside an AMX.
 use std::ffi::CString;
 use std::fmt;
 
-use super::{AmxCell, Buffer, UnsizedBuffer};
+use super::{AmxByRef, Buffer, FromAmxCell, RawCell, ToAmxCell, UnsizedBuffer};
 use crate::amx::Amx;
 use crate::error::AmxResult;
 #[cfg(feature = "encoding")]
 use crate::encoding;
 
-const MAX_UNPACKED: i32 = 0x00FF_FFFF;
+const MAX_UNPACKED: u32 = 0x00FF_FFFF;
+
+fn is_packed(cell: RawCell) -> bool {
+    cell.bits() > MAX_UNPACKED
+}
 
 /// A wrapper around an AMX string.
 ///
@@ -54,24 +58,21 @@ impl<'amx> AmxString<'amx> {
     /// Convert an AMX string to a `Vec<u8>`.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut vec = Vec::with_capacity(self.len);
-        // packed string
-        if !self.inner.is_empty() && self.inner.get(0) > MAX_UNPACKED {
-            let mut ptr = self.inner.as_ptr();
-            let mut mark = 3;
-            for _ in 0..self.len {
-                let ch = (unsafe { *ptr } >> (mark * 8)) as u8;
+        if !self.inner.is_empty() && is_packed(self.inner.as_cells()[0].get()) {
+            for index in 0..self.len {
+                let bits = self.inner.as_cells()[index / size_of::<RawCell>()]
+                    .get()
+                    .bits();
+                let shift = (size_of::<RawCell>() - 1 - index % size_of::<RawCell>()) * 8;
+                let ch = (bits >> shift) as u8;
                 if ch == b'\0' {
                     break;
                 }
                 vec.push(ch);
-                mark = (mark + 3) % 4;
-                if mark == 3 {
-                    ptr = unsafe { ptr.add(1) };
-                }
             }
         } else {
             for cell in &self.inner.as_cells()[..self.len] {
-                vec.push(cell.get() as u8);
+                vec.push(cell.get().get() as u8);
             }
         }
 
@@ -135,31 +136,40 @@ impl<'amx> AmxString<'amx> {
         self.len() == 0
     }
 
-    /// Return a length of a buffer of a string
-    pub fn bytes_len(&self) -> usize {
+    /// Return the number of cells occupied by the string and its terminator.
+    pub fn cells_len(&self) -> usize {
         self.inner.len()
     }
 }
 
-impl<'amx> AmxCell<'amx> for AmxString<'amx> {
-    fn from_raw(amx: Amx<'amx>, cell: i32) -> AmxResult<AmxString<'amx>> {
-        let buffer = UnsizedBuffer::from_raw(amx, cell)?;
+impl<'amx> FromAmxCell<'amx> for AmxString<'amx> {
+    fn from_cell(amx: Amx<'amx>, cell: RawCell) -> AmxResult<Self> {
+        let buffer = UnsizedBuffer::from_cell(amx, cell)?;
         let ptr = buffer.as_ptr();
         let str_len = amx.strlen(ptr)?;
-        let buf_len = str_len + 1;
+        let terminated_len = str_len
+            .checked_add(1)
+            .ok_or(crate::error::AmxError::Domain)?;
+        let buf_len = if is_packed(buffer.first_cell()) {
+            terminated_len.div_ceil(size_of::<RawCell>())
+        } else {
+            terminated_len
+        };
 
         Ok(AmxString {
             inner: buffer.into_sized_buffer(buf_len)?,
             len: str_len,
         })
     }
+}
 
-    fn as_cell(&self) -> i32 {
-        self.inner.as_cell()
+impl ToAmxCell for AmxString<'_> {
+    fn to_cell(&self) -> RawCell {
+        self.inner.to_cell()
     }
 }
 
-impl<'amx> super::repr::AmxCellByRef<'amx> for AmxString<'amx> {}
+impl<'amx> AmxByRef<'amx> for AmxString<'amx> {}
 
 // No `Display` on purpose: it would hand out a lossy conversion through the
 // innocent-looking auto-implemented `.to_string()`. `Debug` escapes instead.
@@ -179,7 +189,7 @@ impl fmt::Debug for AmxString<'_> {
 /// # use samp_sdk::amx::Amx;
 ///
 /// # fn main() -> AmxResult<()> {
-/// # let amx = unsafe { Amx::new(std::ptr::null_mut(), 0) };
+/// # let amx = unsafe { Amx::new(std::ptr::NonNull::dangling(), std::ptr::NonNull::dangling()) };
 /// // let amx = ...;
 /// let allocator = amx.allocator();
 /// let buffer = allocator.allot_buffer(25)?; // let's think that we got a buffer from a native function input.

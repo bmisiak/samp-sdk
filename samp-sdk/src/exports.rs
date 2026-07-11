@@ -1,5 +1,6 @@
 //! Types to get exported functions by AMX.
 use crate::raw::functions;
+use std::ptr::NonNull;
 
 macro_rules! impl_export {
     ($name:ident) => {
@@ -10,8 +11,8 @@ macro_rules! impl_export {
             const OFFSET: isize = Exports::$name as isize;
 
             #[inline(always)]
-            fn from_table(fn_table: usize) -> Self::Output {
-                let table = fn_table as *const usize;
+            unsafe fn from_table(fn_table: NonNull<usize>) -> Self::Output {
+                let table = fn_table.as_ptr();
 
                 unsafe {
                     let ptr = table.offset(Self::OFFSET);
@@ -26,7 +27,10 @@ pub trait Export {
     type Output;
     const OFFSET: isize;
 
-    fn from_table(fn_table: usize) -> Self::Output;
+    /// # Safety
+    /// `fn_table` must point to a complete AMX export table containing a
+    /// function of the declared type at [`Self::OFFSET`].
+    unsafe fn from_table(fn_table: NonNull<usize>) -> Self::Output;
 }
 
 impl_export!(Align16);

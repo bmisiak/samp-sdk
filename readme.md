@@ -1,62 +1,38 @@
-[![Docs](https://docs.rs/samp/badge.svg)](https://docs.rs/samp)
-[![Crates](https://img.shields.io/crates/v/samp.svg)](https://crates.io/crates/samp)
 # samp-rs
-samp-rs is a tool to develop plugins for [samp](http://sa-mp.com) servers written in rust.
 
-# documentation
-it's [here](https://zottce.github.io/samp-rs/samp/index.html)! need to find a way to fix docs.rs ...
+Rust bindings and safe wrappers for writing SA-MP plugins.
 
-# project structure
-* `samp` is a glue between crates described below (that's what you need).
-* `samp-codegen` generates raw `extern "C"` functions and does whole nasty job.
-* `samp-sdk` contains all types to work with amx.
+The workspace contains:
 
-# usage
-* [install](https://rustup.rs) rust compiler (supports only `i686` os versions because of samp server arch).
-* add in your `Cargo.toml` this:
-```toml
-[lib]
-crate-type = ["cdylib"] # or dylib
+- `samp`: plugin lifecycle, AMX handles, logging, and public macros;
+- `samp-codegen`: `#[native]` and `initialize_plugin!`;
+- `samp-sdk`: raw SDK bindings plus safe cells, arguments, references, buffers,
+  strings, and allocation.
 
-[dependencies]
-samp = "0.1.2"
-```
-* write your first plugin
+SA-MP itself is 32-bit; plugin builds target an i686 platform.
 
-# migration from old versions
-* check out [the guide](migration.md)
+## Example
 
-# examples
-* simple memcache plugin in `plugin-example` folder.
-* your `lib.rs` file
-```rust
-use samp::prelude::*; // export most useful types
-use samp::{native, initialize_plugin}; // codegen macros
+```rust,no_run
+use samp::prelude::*;
+use samp::{initialize_plugin, native};
 
-struct Plugin;
-
-impl SampPlugin for Plugin {
-    // this function executed when samp server loads your plugin
-    fn on_load(&mut self) {
-        println!("Plugin is loaded.");
-    }
-}
-
-impl Plugin {
-    #[native(name = "TestNative")]
-    fn my_native(&mut self, _amx: &Amx, text: AmxString) -> AmxResult<bool> {
-        let text = text.to_string(); // convert amx string into rust string
-        println!("rust plugin: {}", text);
-
-        Ok(true)
-    }
+#[native(name = "TestNative")]
+fn test_native(_amx: Amx, text: AmxString) -> AmxResult<bool> {
+    println!("{}", text.to_string_lossy());
+    Ok(true)
 }
 
 initialize_plugin!(
-    natives: [Plugin::my_native],
+    natives: [test_native],
     {
-        let plugin = Plugin; // create a plugin object
-        return plugin; // return the plugin into runtime
+        println!("Plugin loaded");
     }
-)
+);
 ```
+
+Native arguments are decoded before the Rust function is called. Checked
+types such as `u32`, `usize`, and `NonZeroUsize` reject cells outside their
+domain. Raw bit patterns remain available explicitly through `RawCell`.
+
+See [migration.md](migration.md) for the current breaking API changes.

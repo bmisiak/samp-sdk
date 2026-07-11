@@ -1,7 +1,7 @@
 /// Execute a public AMX function by name.
 ///
 /// # Notes
-/// Function input arguments should implement `AmxCell` except *Rust* strings and slices.
+/// Function input arguments should implement `ToAmxCell` except *Rust* strings and slices.
 ///
 /// To pass a Rust string there is the next syntax - `variable_name => string`, for array `variable_name => array`.
 ///
@@ -13,12 +13,12 @@
 /// use samp_sdk::exec_public;
 /// # use samp_sdk::amx::Amx;
 /// #
-/// # let amx = unsafe { Amx::new(std::ptr::null_mut(), 0) };
+/// # let amx = unsafe { Amx::new(std::ptr::NonNull::dangling(), std::ptr::NonNull::dangling()) };
 ///
 /// exec_public!(amx, c"SomePublicFunction");
 /// ```
 ///
-/// With arguments that implement `AmxCell`.
+/// With arguments that implement `ToAmxCell`.
 /// ```rust,no_run
 /// use samp_sdk::exec_public;
 /// # use samp_sdk::amx::Amx;

@@ -11,7 +11,7 @@ use std::convert::Infallible;
 use std::fmt::Display;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use samp_sdk::cell::AmxCell;
+use samp_sdk::cell::{RawCell, ToAmxCell};
 
 static DEFAULT_LOGGER: AtomicBool = AtomicBool::new(true);
 
@@ -36,21 +36,35 @@ macro_rules! impl_native_return {
             type Error = Infallible;
 
             fn into_return(self) -> Result<i32, Infallible> {
-                Ok(AmxCell::as_cell(&self))
+                Ok(self.to_cell().get())
             }
         }
     )+};
 }
 
-// Enumerated rather than blanket over `T: AmxCell`: coherence would treat a
+// Enumerated rather than blanket over `T: ToAmxCell`: coherence would treat a
 // blanket impl as overlapping with the `Result` impl below.
-impl_native_return!(i8, u8, i16, u16, i32, u32, isize, usize, f32, bool);
+impl_native_return!(
+    i8,
+    u8,
+    i16,
+    u16,
+    i32,
+    std::num::NonZeroI8,
+    std::num::NonZeroU8,
+    std::num::NonZeroI16,
+    std::num::NonZeroU16,
+    std::num::NonZeroI32,
+    f32,
+    bool,
+    RawCell
+);
 
-impl<T: AmxCell<'static>, E: Display> NativeReturn for Result<T, E> {
+impl<T: ToAmxCell, E: Display> NativeReturn for Result<T, E> {
     type Error = E;
 
     fn into_return(self) -> Result<i32, E> {
-        self.map(|value| value.as_cell())
+        self.map(|value| value.to_cell().get())
     }
 }
 
@@ -119,6 +133,6 @@ pub fn finish_setup() {
 ///
 /// [`Amx`]: ../amx/struct.Amx.html
 #[doc(hidden)]
-pub fn amx_exports() -> usize {
+pub fn amx_exports() -> std::ptr::NonNull<usize> {
     crate::interlayer::amx_exports()
 }

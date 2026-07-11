@@ -65,6 +65,6 @@ pub use samp_sdk::encoding;
 pub mod prelude {
     //! Most used imports.
     pub use crate::amx::{Amx, AmxExt, AmxHandle};
-    pub use crate::cell::{AmxCell, AmxString, Buffer, Ref, UnsizedBuffer};
+    pub use crate::cell::{AmxString, Buffer, FromAmxCell, RawCell, Ref, ToAmxCell, UnsizedBuffer};
     pub use crate::error::AmxResult;
 }

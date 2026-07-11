@@ -10,8 +10,8 @@ use crate::REG_PREFIX;
 /// initialize_plugin!(
 ///     natives: [my_native, other_native],   // optional
 ///     on_unload: path::to::fn,              // optional, fn()
-///     on_amx_load: path::to::fn,            // optional, fn(&Amx)
-///     on_amx_unload: path::to::fn,          // optional, fn(&Amx)
+///     on_amx_load: path::to::fn,            // optional, fn(Amx)
+///     on_amx_unload: path::to::fn,          // optional, fn(Amx)
 ///     process_tick: path::to::fn,           // optional, fn(); enables PROCESS_TICK support
 ///     {
 ///         // setup block, runs in Load() — set up logging etc.
@@ -111,13 +111,13 @@ pub fn create_plugin(input: TokenStream) -> TokenStream {
 
     let amx_load_body = match plugin.on_amx_load {
         Some(path) => quote! {
-            samp::interlayer::amx_load(amx, &natives);
+            unsafe { samp::interlayer::amx_load(amx, &natives) };
             if let Some(amx) = std::ptr::NonNull::new(amx) {
-                samp::amx::enter(amx, |amx| #path(amx));
+                unsafe { samp::amx::enter(amx, |amx| #path(amx)) };
             }
         },
         None => quote! {
-            samp::interlayer::amx_load(amx, &natives);
+            unsafe { samp::interlayer::amx_load(amx, &natives) };
         },
     };
 
@@ -125,7 +125,7 @@ pub fn create_plugin(input: TokenStream) -> TokenStream {
     let amx_unload_body = match plugin.on_amx_unload {
         Some(path) => quote! {
             if let Some(amx) = std::ptr::NonNull::new(amx) {
-                samp::amx::enter(amx, |amx| #path(amx));
+                unsafe { samp::amx::enter(amx, |amx| #path(amx)) };
             }
             samp::interlayer::amx_unload(amx);
         },
@@ -150,8 +150,11 @@ pub fn create_plugin(input: TokenStream) -> TokenStream {
         }
 
         #[no_mangle]
-        pub extern "system" fn Load(server_data: *const usize) -> i32 {
-            samp::interlayer::load(server_data);
+        pub unsafe extern "system" fn Load(server_data: *const usize) -> i32 {
+            let Some(server_data) = std::ptr::NonNull::new(server_data.cast_mut()) else {
+                return 0;
+            };
+            unsafe { samp::interlayer::load(server_data) };
 
             {
                 #(#block)*
@@ -167,14 +170,14 @@ pub fn create_plugin(input: TokenStream) -> TokenStream {
         }
 
         #[no_mangle]
-        pub extern "system" fn AmxLoad(amx: *mut samp::raw::types::AMX) {
+        pub unsafe extern "system" fn AmxLoad(amx: *mut samp::raw::types::AMX) {
             let natives = vec![#(#natives),*];
 
             #amx_load_body
         }
 
         #[no_mangle]
-        pub extern "system" fn AmxUnload(amx: *mut samp::raw::types::AMX) {
+        pub unsafe extern "system" fn AmxUnload(amx: *mut samp::raw::types::AMX) {
             #amx_unload_body
         }
 
