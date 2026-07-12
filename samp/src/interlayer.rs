@@ -1,6 +1,6 @@
 //! Glue between the SA-MP server's raw plugin interface and safe code.
 //! The functions here are called from the entry points that
-//! `initialize_plugin!` generates.
+//! `plugin!` generates.
 use std::fmt;
 use std::os::raw::{c_char, c_int};
 use std::ptr::NonNull;
@@ -61,9 +61,7 @@ pub fn amx_exports() -> NonNull<usize> {
 }
 
 fn logprintf() -> Logprintf {
-    unsafe {
-        (server_exports().offset(ServerData::Logprintf.into()) as *const Logprintf).read()
-    }
+    unsafe { (server_exports().offset(ServerData::Logprintf.into()) as *const Logprintf).read() }
 }
 
 pub(crate) fn log(message: fmt::Arguments) {

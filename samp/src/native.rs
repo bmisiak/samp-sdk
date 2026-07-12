@@ -18,6 +18,7 @@
 //! [`Amx`]: ../amx/struct.Amx.html
 //! [`VariadicArgs`]: ../args/struct.VariadicArgs.html
 //! [`NativeReturn`]: ../plugin/trait.NativeReturn.html
+use std::ffi::CStr;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 
@@ -70,6 +71,17 @@ impl<'amx> NativeParam<'amx, CurrentAmx> for Amx<'amx> {
 ///
 /// [`VariadicArgs`]: ../args/struct.VariadicArgs.html
 /// [`NativeReturn`]: ../plugin/trait.NativeReturn.html
+///
+/// A variadic tail is rejected anywhere but the final position:
+///
+/// ```compile_fail
+/// use samp::{args::VariadicArgs, native::Native};
+///
+/// fn assert_native<'amx, Marker, F: Native<'amx, Marker>>(_f: F) {}
+/// fn variadic_in_middle(_rest: VariadicArgs, _value: i32) -> i32 { 0 }
+///
+/// assert_native(variadic_in_middle);
+/// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be used as an AMX native",
     note = "every parameter must be a `FromAmxCell` type, `Amx`, or a final `VariadicArgs`, \
@@ -78,7 +90,7 @@ impl<'amx> NativeParam<'amx, CurrentAmx> for Amx<'amx> {
 pub trait Native<'amx, Marker> {
     /// Extract the arguments, call the function, and convert the return
     /// value, logging any failure under `name` and turning it into 0.
-    fn invoke(self, name: &str, amx: Amx<'amx>, args: Args<'amx>) -> i32;
+    fn invoke(self, name: &CStr, amx: Amx<'amx>, args: Args<'amx>) -> i32;
 }
 
 /// [`Native`] marker for functions whose arguments are all [`NativeParam`]s.
@@ -97,7 +109,7 @@ macro_rules! impl_native {
             Ret: NativeReturn,
             $($param: NativeParam<'amx, $marker>,)*
         {
-            fn invoke(self, name: &str, amx: Amx<'amx>, mut args: Args<'amx>) -> i32 {
+            fn invoke(self, name: &CStr, amx: Amx<'amx>, mut args: Args<'amx>) -> i32 {
                 let _ = (&amx, &mut args);
                 $(let $value = extract_or_return_zero!(name, amx, args, $param, $marker);)*
                 finish(name, self($($value,)*))
@@ -110,7 +122,7 @@ macro_rules! impl_native {
             Ret: NativeReturn,
             $($param: NativeParam<'amx, $marker>,)*
         {
-            fn invoke(self, name: &str, amx: Amx<'amx>, mut args: Args<'amx>) -> i32 {
+            fn invoke(self, name: &CStr, amx: Amx<'amx>, mut args: Args<'amx>) -> i32 {
                 let _ = (&amx, &mut args);
                 $(let $value = extract_or_return_zero!(name, amx, args, $param, $marker);)*
                 finish(name, self($($value,)* args.into_variadic()))
@@ -136,7 +148,7 @@ macro_rules! extract_or_return_zero {
     }};
 }
 
-fn finish(name: &str, returned: impl NativeReturn) -> i32 {
+fn finish(name: &CStr, returned: impl NativeReturn) -> i32 {
     match returned.into_return() {
         Ok(cell) => cell,
         Err(error) => {
@@ -177,7 +189,7 @@ impl_native!(a: A, MA; b: B, MB; c: C, MC; d: D, MD; e: E, ME; f: F, MF; g: G, M
 /// [`Amx`]: ../amx/struct.Amx.html
 /// [`enter`]: ../amx/fn.enter.html
 pub unsafe fn native_entry(
-    name: &str,
+    name: &CStr,
     amx: *mut AMX,
     params: *const i32,
     scope: impl for<'amx> FnOnce(Amx<'amx>, Args<'amx>) -> i32,
@@ -232,7 +244,10 @@ mod tests {
         }
 
         let args = args_over(&mut [0, 7, 5]);
-        assert_eq!(Native::invoke(subtract, "Subtract", dangling_amx(), args), 2);
+        assert_eq!(
+            Native::invoke(subtract, c"Subtract", dangling_amx(), args),
+            2
+        );
     }
 
     #[test]
@@ -242,7 +257,7 @@ mod tests {
         }
 
         let args = args_over(&mut [0, 3, 4]);
-        assert_eq!(Native::invoke(middle, "Middle", dangling_amx(), args), 34);
+        assert_eq!(Native::invoke(middle, c"Middle", dangling_amx(), args), 34);
     }
 
     #[test]
@@ -252,7 +267,10 @@ mod tests {
         }
 
         let args = args_over(&mut [0]);
-        assert_eq!(Native::invoke(nullary, "Nullary", dangling_amx(), args), 41);
+        assert_eq!(
+            Native::invoke(nullary, c"Nullary", dangling_amx(), args),
+            41
+        );
     }
 
     /// The signatures the plugin actually uses — strings, results, and a
@@ -293,8 +311,8 @@ mod tests {
             params: *const i32,
         ) -> i32 {
             unsafe {
-                native_entry("Add3", amx, params, |amx, args| {
-                    Native::invoke(add3, "Add3", amx, args)
+                native_entry(c"Add3", amx, params, |amx, args| {
+                    Native::invoke(add3, c"Add3", amx, args)
                 })
             }
         }
@@ -312,13 +330,4 @@ mod tests {
         let result = unsafe { trampoline(fake_amx.as_mut_ptr(), params.as_mut_ptr()) };
         assert_eq!(result, 42);
     }
-}
-
-#[cfg(test)]
-mod error_probe {
-    use crate::native::Native;
-    fn variadic_in_middle(_rest: samp_sdk::args::VariadicArgs, _x: i32) -> i32 { 0 }
-    fn assert_native<'amx, M, F: Native<'amx, M>>(_f: F) {}
-    #[test]
-    fn probe() { assert_native(variadic_in_middle); }
 }

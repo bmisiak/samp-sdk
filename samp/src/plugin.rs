@@ -1,19 +1,18 @@
 //! Plugin setup helpers.
 //!
 //! There is no plugin object and no trait to implement: natives are free
-//! functions (see [`native`]) and lifecycle hooks are free functions passed
-//! to [`initialize_plugin!`]. Keep plugin state in `thread_local!` storage —
+//! functions and lifecycle hooks are free functions passed to [`plugin!`].
+//! Keep plugin state in `thread_local!` storage —
 //! SA-MP plugins run on the server's main thread.
 //!
-//! [`native`]: ../attr.native.html
-//! [`initialize_plugin!`]: ../macro.initialize_plugin.html
+//! [`plugin!`]: ../macro.plugin.html
 use std::convert::Infallible;
 use std::fmt::Display;
 use std::sync::{PoisonError, RwLock};
 
 use samp_sdk::cell::{RawCell, ToAmxCell};
 
-/// What a `#[native]` function may return.
+/// What a native function may return.
 ///
 /// Natives ultimately return one 32-bit cell to PAWN. Infallible natives
 /// return a plain cell-convertible value (`i32`, `bool`, `f32`, …);
@@ -68,7 +67,8 @@ impl<T: ToAmxCell, E: Display> NativeReturn for Result<T, E> {
 
 /// Put a native's failure in the server log. Called by generated wrappers.
 #[doc(hidden)]
-pub fn log_native_error(native_name: &str, error: impl Display) {
+pub fn log_native_error(native_name: &std::ffi::CStr, error: impl Display) {
+    let native_name = native_name.to_string_lossy();
     crate::interlayer::log(format_args!("{} error: {}", native_name, error));
 }
 
@@ -80,9 +80,7 @@ static CUSTOM_LOG: RwLock<Option<&'static dyn log::Log>> = RwLock::new(None);
 /// e.g. to also write to a plugin-specific file. May be called from the
 /// setup block (the usual place) or later.
 pub fn set_logger(logger: &'static dyn log::Log) {
-    *CUSTOM_LOG
-        .write()
-        .unwrap_or_else(PoisonError::into_inner) = Some(logger);
+    *CUSTOM_LOG.write().unwrap_or_else(PoisonError::into_inner) = Some(logger);
 }
 
 /// The logger handed to `log::set_logger`: delegates to the [`set_logger`]
@@ -113,7 +111,12 @@ impl log::Log for ServerLog {
                 record.args()
             ));
         } else {
-            eprintln!("[{}] {}: {}", record.target(), record.level(), record.args());
+            eprintln!(
+                "[{}] {}: {}",
+                record.target(),
+                record.level(),
+                record.args()
+            );
         }
     }
 
@@ -132,13 +135,4 @@ pub(crate) fn install_logger() {
         // default; a setup block may raise this with log::set_max_level.
         log::set_max_level(log::LevelFilter::Info);
     }
-}
-
-/// The `amx_*` exports table passed by the server, used by generated natives
-/// to construct [`Amx`] handles from raw pointers.
-///
-/// [`Amx`]: ../amx/struct.Amx.html
-#[doc(hidden)]
-pub fn amx_exports() -> std::ptr::NonNull<usize> {
-    crate::interlayer::amx_exports()
 }

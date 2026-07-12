@@ -139,14 +139,12 @@ pub trait AmxExt {
     /// ```
     /// use samp::prelude::*;
     /// use samp::amx::AmxHandle;
-    /// # use samp::native;
     /// # use std::cell::Cell;
     ///
     /// thread_local! {
     ///     static LAST_CALLER: Cell<Option<AmxHandle>> = Cell::new(None);
     /// }
     ///
-    /// #[native(name = "RememberMe")]
     /// fn remember_me(amx: Amx) -> AmxResult<bool> {
     ///     LAST_CALLER.with(|last| last.set(Some(amx.handle())));
     ///     // ...later, redeem it with samp::amx::with
