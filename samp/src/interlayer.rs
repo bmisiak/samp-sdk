@@ -1,10 +1,12 @@
 //! Glue between the SA-MP server's raw plugin interface and safe code.
 //! The functions here are called from the entry points that
 //! `initialize_plugin!` generates.
-use std::ffi::CString;
-use std::fmt::Display;
+use std::fmt;
+use std::os::raw::{c_char, c_int};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
+use std::thread::{self, ThreadId};
 
 use samp_sdk::consts::{ServerData, Supports};
 use samp_sdk::raw::functions::Logprintf;
@@ -12,6 +14,10 @@ use samp_sdk::raw::types::{AMX, AMX_NATIVE_INFO};
 
 /// The server's export table, set once in `Load()` before anything else runs.
 static SERVER_EXPORTS: AtomicUsize = AtomicUsize::new(0);
+
+/// The thread `Load()` ran on — the server's main thread, the only one
+/// allowed to touch `logprintf` and the AMX.
+static MAIN_THREAD: OnceLock<ThreadId> = OnceLock::new();
 
 pub fn supports(process_tick: bool) -> u32 {
     let mut supports = Supports::VERSION | Supports::AMX_NATIVES;
@@ -27,7 +33,13 @@ pub fn supports(process_tick: bool) -> u32 {
 /// `server_data` must be the server export table and remain valid until the
 /// plugin unloads.
 pub unsafe fn load(server_data: NonNull<usize>) {
+    let _ = MAIN_THREAD.set(thread::current().id());
     SERVER_EXPORTS.store(server_data.as_ptr() as usize, Ordering::Release);
+    crate::plugin::install_logger();
+}
+
+pub(crate) fn on_main_thread() -> bool {
+    MAIN_THREAD.get() == Some(&thread::current().id())
 }
 
 fn server_exports() -> *const usize {
@@ -54,13 +66,23 @@ fn logprintf() -> Logprintf {
     }
 }
 
-pub(crate) fn log<T: Display>(message: T) {
-    if let Ok(cstr) = CString::new(message.to_string()) {
-        // SAFETY: `Load` installed the server's `logprintf`; both strings
-        // remain alive and NUL-terminated, and the fixed format consumes the
-        // one supplied pointer.
-        unsafe { logprintf()(c"%s".as_ptr(), cstr.as_ptr()) };
+pub(crate) fn log(message: fmt::Arguments) {
+    // The server's logprintf vsprintf's into a fixed `char buffer[512]` with
+    // no bounds checking — a longer message would overflow its stack, so
+    // truncate to 511 bytes plus the NUL (at a char boundary, to not tear a
+    // multi-byte character).
+    const MAX_LINE: usize = 511;
+
+    let text = message.to_string();
+    let mut cutoff = text.len().min(MAX_LINE);
+    while !text.is_char_boundary(cutoff) {
+        cutoff -= 1;
     }
+    let len = c_int::try_from(cutoff).expect("at most 511 bytes fits c_int");
+    // SAFETY: `Load` installed the server's `logprintf`, which copies its
+    // arguments synchronously. The `%.*s` precision bounds the read to `len`
+    // initialized bytes of `text`, so no NUL terminator is needed.
+    unsafe { logprintf()(c"%.*s".as_ptr(), len, text.as_ptr().cast::<c_char>()) };
 }
 
 /// # Safety

@@ -9,11 +9,9 @@
 //! [`initialize_plugin!`]: ../macro.initialize_plugin.html
 use std::convert::Infallible;
 use std::fmt::Display;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{PoisonError, RwLock};
 
 use samp_sdk::cell::{RawCell, ToAmxCell};
-
-static DEFAULT_LOGGER: AtomicBool = AtomicBool::new(true);
 
 /// What a `#[native]` function may return.
 ///
@@ -74,57 +72,65 @@ pub fn log_native_error(native_name: &str, error: impl Display) {
     crate::interlayer::log(format_args!("{} error: {}", native_name, error));
 }
 
-/// Get a fern [`Dispatch`] that forwards log records to the server's
-/// `logprintf`, and disable auto-installing the default logger.
-///
-/// # Example
-/// ```rust,no_run
-/// use samp::initialize_plugin;
-///
-/// use std::fs::OpenOptions;
-///
-/// initialize_plugin!({
-///     // get a default samp logger (uses samp logprintf).
-///     let samp_logger = samp::plugin::logger()
-///         .level(log::LevelFilter::Warn); // logging only warn and error messages
-///
-///     let log_file = fern::log_file("myplugin.log").expect("Something wrong!");
-///
-///     // log trace and debug messages in an another file
-///     let trace_level = fern::Dispatch::new()
-///         .level(log::LevelFilter::Trace) // write ALL types of logs
-///         .chain(log_file);
-///
-///     let _ = fern::Dispatch::new()
-///         .format(|callback, message, record| {
-///             // all messages will be formated like
-///             // [MyPlugin][ERROR]: something (error!("something"))
-///             // [MyPlugin][INFO]: some info (info!("some info"))
-///             callback.finish(format_args!("[MyPlugin][{}]: {}", record.level(), message))
-///         })
-///         .chain(samp_logger)
-///         .chain(trace_level)
-///         .apply();
-/// });
-/// ```
-///
-/// [`Dispatch`]: https://docs.rs/fern/0.6/fern/struct.Dispatch.html
-pub fn logger() -> fern::Dispatch {
-    DEFAULT_LOGGER.store(false, Ordering::Relaxed);
+/// A replacement logger installed via [`set_logger`]; `None` routes records
+/// to the default server-log logger.
+static CUSTOM_LOG: RwLock<Option<&'static dyn log::Log>> = RwLock::new(None);
 
-    fern::Dispatch::new().chain(fern::Output::call(|record| {
-        crate::interlayer::log(record.args());
-    }))
+/// Route [`log`] records to a custom logger instead of the default one,
+/// e.g. to also write to a plugin-specific file. May be called from the
+/// setup block (the usual place) or later.
+pub fn set_logger(logger: &'static dyn log::Log) {
+    *CUSTOM_LOG
+        .write()
+        .unwrap_or_else(PoisonError::into_inner) = Some(logger);
 }
 
-/// Called by the generated `Load()` after the setup block: installs the
-/// default logger unless the setup block built its own via [`logger`].
+/// The logger handed to `log::set_logger`: delegates to the [`set_logger`]
+/// replacement if there is one, and otherwise forwards records to the
+/// server's `logprintf`, prefixed with the emitting crate's module path and
+/// the level: `[my_plugin] ERROR: something broke`.
 ///
-/// [`logger`]: fn.logger.html
-#[doc(hidden)]
-pub fn finish_setup() {
-    if DEFAULT_LOGGER.load(Ordering::Relaxed) {
-        let _ = logger().apply();
+/// SA-MP's `logprintf` is not thread-safe, so records from other threads
+/// (the `log` facade accepts them from anywhere) go to stderr instead.
+struct ServerLog;
+
+impl log::Log for ServerLog {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        match *CUSTOM_LOG.read().unwrap_or_else(PoisonError::into_inner) {
+            Some(custom) => custom.enabled(metadata),
+            None => true,
+        }
+    }
+
+    fn log(&self, record: &log::Record) {
+        if let Some(custom) = *CUSTOM_LOG.read().unwrap_or_else(PoisonError::into_inner) {
+            custom.log(record);
+        } else if crate::interlayer::on_main_thread() {
+            crate::interlayer::log(format_args!(
+                "[{}] {}: {}",
+                record.target(),
+                record.level(),
+                record.args()
+            ));
+        } else {
+            eprintln!("[{}] {}: {}", record.target(), record.level(), record.args());
+        }
+    }
+
+    fn flush(&self) {
+        if let Some(custom) = *CUSTOM_LOG.read().unwrap_or_else(PoisonError::into_inner) {
+            custom.flush();
+        }
+    }
+}
+
+/// Called from `interlayer::load` before the setup block runs, so that the
+/// block's own `info!`/`error!` calls already reach the server log.
+pub(crate) fn install_logger() {
+    if log::set_logger(&ServerLog).is_ok() {
+        // Keep dependencies' trace!/debug! chatter out of the server log by
+        // default; a setup block may raise this with log::set_max_level.
+        log::set_max_level(log::LevelFilter::Info);
     }
 }
 

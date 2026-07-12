@@ -5,8 +5,6 @@ use std::fmt;
 use super::{AmxByRef, Buffer, FromAmxCell, RawCell, ToAmxCell, UnsizedBuffer};
 use crate::amx::Amx;
 use crate::error::AmxResult;
-#[cfg(feature = "encoding")]
-use crate::encoding;
 
 const MAX_UNPACKED: u32 = 0x00FF_FFFF;
 
@@ -97,10 +95,8 @@ impl<'amx> AmxString<'amx> {
 
     /// Decode the AMX string into a Rust `String`.
     ///
-    /// AMX strings are raw bytes in the server's locale encoding, not UTF-8.
-    /// Without the `encoding` feature, bytes that don't form valid UTF-8 are
-    /// replaced with U+FFFD; enable `encoding` to decode a configured code
-    /// page (e.g. cp1251) instead.
+    /// AMX strings are raw bytes in the server's locale encoding, not UTF-8;
+    /// bytes that don't form valid UTF-8 are replaced with U+FFFD.
     ///
     /// # Example
     /// ```
@@ -120,11 +116,7 @@ impl<'amx> AmxString<'amx> {
     /// }
     /// ```
     pub fn to_string_lossy(&self) -> String {
-        #[cfg(feature = "encoding")]
-        return encoding::get().decode(&self.to_bytes()).0.into_owned();
-
-        #[cfg(not(feature = "encoding"))]
-        return String::from_utf8_lossy(&self.to_bytes()).into_owned();
+        String::from_utf8_lossy(&self.to_bytes()).into_owned()
     }
 
     /// Return a length of a string.
@@ -203,13 +195,7 @@ impl fmt::Debug for AmxString<'_> {
 /// # Errors
 /// Return `AmxError::General` when length of string bytes is more than size of the buffer.
 pub fn put_in_buffer(buffer: &Buffer, string: &str) -> AmxResult<()> {
-    #[cfg(feature = "encoding")]
-    let bytes = encoding::get().encode(string).0;
-
-    #[cfg(not(feature = "encoding"))]
-    let bytes = std::borrow::Cow::from(string.as_bytes());
-
-    let bytes = bytes.as_ref();
+    let bytes = string.as_bytes();
 
     if bytes.len() >= buffer.len() {
         return Err(crate::error::AmxError::General);

@@ -8,18 +8,10 @@ repository = "https://github.com/zottce/samp-rs/"
 readme = "../readme.md"
 edition = "2021"
 
-[features]
-default = []
-encoding = ["samp-sdk/encoding"]
-
 [dependencies]
 samp-sdk = { path = "../samp-sdk", version = "0.10.0" }
 samp-codegen = { path = "../samp-codegen", version = "0.2.0" }
-fern = {version = "0.6", features = []}
-
-[dev-dependencies]
 log = "0.4"
 
 [package.metadata.docs.rs]
-features = ["encoding"]
 default-target = "i686-pc-windows-msvc"

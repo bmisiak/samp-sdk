@@ -59,8 +59,12 @@ pub use samp_codegen::{initialize_plugin, native};
 pub use samp_sdk::{args, cell, consts, error, exports, raw};
 pub use samp_sdk::exec_public; // macros
 
-#[cfg(feature = "encoding")]
-pub use samp_sdk::encoding;
+/// Re-export of the [`log`] crate: `error!`/`info!`/… records land in the
+/// server log via the logger installed by [`initialize_plugin!`].
+///
+/// [`log`]: https://docs.rs/log
+/// [`initialize_plugin!`]: macro.initialize_plugin.html
+pub use log;
 
 pub mod prelude {
     //! Most used imports.

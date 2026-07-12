@@ -160,7 +160,6 @@ pub fn create_plugin(input: TokenStream) -> TokenStream {
                 #(#block)*
             }
 
-            samp::plugin::finish_setup();
             return 1;
         }
 

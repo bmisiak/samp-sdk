@@ -5,10 +5,6 @@ use crate::error::{AmxError, AmxResult};
 use crate::exports::*;
 use crate::raw::types::{AMX, AMX_HEADER, AMX_NATIVE_INFO};
 
-#[cfg(feature = "encoding")]
-use crate::encoding;
-
-use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::ffi::CStr;
 use std::marker::PhantomData;
@@ -534,10 +530,9 @@ impl<'amx> Allocator<'amx> {
         Ok(buffer)
     }
 
-    /// Encode and allocate a zero-terminated AMX string.
+    /// Allocate a zero-terminated AMX string from UTF-8 text.
     pub fn allot_string(&self, string: &str) -> AmxResult<AmxString<'_>> {
-        let bytes = Allocator::string_bytes(string);
-        self.allot_bytes(bytes.as_ref())
+        self.allot_bytes(string.as_bytes())
     }
 
     /// Allocate raw bytes as a zero-terminated AMX string.
@@ -551,14 +546,6 @@ impl<'amx> Allocator<'amx> {
         let buffer = self.allot_buffer(bytes.len() + 1)?;
 
         Ok(AmxString::new(buffer, bytes))
-    }
-
-    fn string_bytes(string: &str) -> Cow<'_, [u8]> {
-        #[cfg(feature = "encoding")]
-        return encoding::get().encode(string).0;
-
-        #[cfg(not(feature = "encoding"))]
-        return Cow::from(string.as_bytes());
     }
 }
 
