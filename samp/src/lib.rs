@@ -53,6 +53,7 @@
 pub mod amx;
 #[doc(hidden)]
 pub mod interlayer;
+pub mod native;
 pub mod plugin;
 
 pub use samp_codegen::{initialize_plugin, native};
